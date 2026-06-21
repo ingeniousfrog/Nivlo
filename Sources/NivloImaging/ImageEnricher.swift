@@ -4,13 +4,16 @@ import ImageIO
 import NivloDomain
 import UniformTypeIdentifiers
 
-public enum ImageEnricherError: Error, LocalizedError, Sendable {
+public enum ImageEnricherError: Error, Equatable, LocalizedError, Sendable {
+  case sourceChanged(URL)
   case unreadableImage(URL)
   case thumbnailCreationFailed(URL)
   case thumbnailWriteFailed(URL)
 
   public var errorDescription: String? {
     switch self {
+    case .sourceChanged(let url):
+      "The source changed while indexing \(url.lastPathComponent)."
     case .unreadableImage(let url):
       "Could not read image data at \(url.path)."
     case .thumbnailCreationFailed(let url):
@@ -37,7 +40,9 @@ public actor ImageEnricher: AssetImageEnriching {
   }
 
   public func enrich(_ asset: ImageAsset) async throws -> AssetEnrichment {
+    try validateSourceStillMatches(asset)
     let exactHash = try sha256(at: asset.url)
+    try validateSourceStillMatches(asset)
     guard let source = CGImageSourceCreateWithURL(asset.url as CFURL, nil) else {
       throw ImageEnricherError.unreadableImage(asset.url)
     }
@@ -47,6 +52,7 @@ public actor ImageEnricher: AssetImageEnriching {
       exactHash: exactHash,
       sourceURL: asset.url
     )
+    try validateSourceStillMatches(asset)
     return AssetEnrichment(
       assetID: asset.id,
       exactHash: exactHash,
@@ -55,6 +61,20 @@ public actor ImageEnricher: AssetImageEnriching {
       exif: extractEXIF(source: source),
       indexedAt: now()
     )
+  }
+
+  private func validateSourceStillMatches(_ asset: ImageAsset) throws {
+    let values = try asset.url.resourceValues(
+      forKeys: [.fileSizeKey, .contentModificationDateKey]
+    )
+    guard Int64(values.fileSize ?? -1) == asset.fileSize else {
+      throw ImageEnricherError.sourceChanged(asset.url)
+    }
+    if let expectedDate = asset.modifiedAt,
+      values.contentModificationDate != expectedDate
+    {
+      throw ImageEnricherError.sourceChanged(asset.url)
+    }
   }
 
   private func sha256(at url: URL) throws -> String {

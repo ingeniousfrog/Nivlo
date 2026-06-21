@@ -75,6 +75,25 @@ struct ImageEnricherTests {
 
     #expect(!FileManager.default.fileExists(atPath: fixture.cacheURL.path))
   }
+
+  @Test("rejects a file that changed after the scan snapshot")
+  func rejectsChangedSourceSnapshot() async throws {
+    let fixture = try ImagingFixture()
+    let staleAsset = fixture.asset
+    let handle = try FileHandle(forWritingTo: fixture.imageURL)
+    defer {
+      try? handle.close()
+    }
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data([0x00, 0x01, 0x02]))
+    let enricher = ImageEnricher(cacheDirectory: fixture.cacheURL)
+
+    await #expect(throws: ImageEnricherError.sourceChanged(fixture.imageURL)) {
+      try await enricher.enrich(staleAsset)
+    }
+
+    #expect(!FileManager.default.fileExists(atPath: fixture.cacheURL.path))
+  }
 }
 
 private struct ImagingFixture {

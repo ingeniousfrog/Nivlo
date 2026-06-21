@@ -25,6 +25,39 @@ public protocol DirectoryContentListing: Sendable {
   ) throws -> DirectoryListing
 }
 
+public struct FileResourceSnapshot: Sendable {
+  public let isRegularFile: Bool
+  public let contentType: UTType?
+  public let fileSize: Int?
+  public let createdAt: Date?
+  public let modifiedAt: Date?
+  public let fileIdentifier: String?
+  public let volumeIdentifier: String?
+
+  public init(
+    isRegularFile: Bool,
+    contentType: UTType?,
+    fileSize: Int?,
+    createdAt: Date?,
+    modifiedAt: Date?,
+    fileIdentifier: String?,
+    volumeIdentifier: String?
+  ) {
+    self.isRegularFile = isRegularFile
+    self.contentType = contentType
+    self.fileSize = fileSize
+    self.createdAt = createdAt
+    self.modifiedAt = modifiedAt
+    self.fileIdentifier = fileIdentifier
+    self.volumeIdentifier = volumeIdentifier
+  }
+}
+
+public protocol FileResourceReading: Sendable {
+  func snapshot(for url: URL, keys: Set<URLResourceKey>) throws
+    -> FileResourceSnapshot
+}
+
 public struct FoundationDirectoryContentLister: DirectoryContentListing {
   public init() {}
 
@@ -53,19 +86,42 @@ public struct FoundationDirectoryContentLister: DirectoryContentListing {
   }
 }
 
+public struct FoundationFileResourceReader: FileResourceReading {
+  public init() {}
+
+  public func snapshot(
+    for url: URL,
+    keys: Set<URLResourceKey>
+  ) throws -> FileResourceSnapshot {
+    let values = try url.resourceValues(forKeys: keys)
+    return FileResourceSnapshot(
+      isRegularFile: values.isRegularFile == true,
+      contentType: values.contentType,
+      fileSize: values.fileSize,
+      createdAt: values.creationDate,
+      modifiedAt: values.contentModificationDate,
+      fileIdentifier: values.fileResourceIdentifier.map { String(describing: $0) },
+      volumeIdentifier: values.volumeIdentifier.map { String(describing: $0) }
+    )
+  }
+}
+
 public actor DirectoryScanner: DirectoryScanning {
   private let fileManager: FileManager
   private let repository: any AssetRepository
   private let contentLister: any DirectoryContentListing
+  private let resourceReader: any FileResourceReading
 
   public init(
     repository: any AssetRepository,
     fileManager: FileManager = .default,
-    contentLister: any DirectoryContentListing = FoundationDirectoryContentLister()
+    contentLister: any DirectoryContentListing = FoundationDirectoryContentLister(),
+    resourceReader: any FileResourceReading = FoundationFileResourceReader()
   ) {
     self.repository = repository
     self.fileManager = fileManager
     self.contentLister = contentLister
+    self.resourceReader = resourceReader
   }
 
   public func scan(rootURL: URL) async throws -> ScanSummary {
@@ -120,22 +176,29 @@ public actor DirectoryScanner: DirectoryScanning {
     var skippedCount = 0
     var issueCount = listing.issueCount
     for fileURL in listing.urls {
-      let values: URLResourceValues
+      let snapshot: FileResourceSnapshot
       do {
-        values = try fileURL.resourceValues(forKeys: Set(resourceKeys))
+        snapshot = try resourceReader.snapshot(
+          for: fileURL,
+          keys: Set(resourceKeys)
+        )
       } catch {
         issueCount += 1
         continue
       }
-      guard values.isRegularFile == true else {
+      guard snapshot.isRegularFile else {
         continue
       }
-      guard let contentType = values.contentType, contentType.conforms(to: .image) else {
+      guard let contentType = snapshot.contentType else {
+        issueCount += 1
+        continue
+      }
+      guard contentType.conforms(to: .image) else {
         skippedCount += 1
         continue
       }
-      guard let identity = makeIdentity(for: fileURL, values: values) else {
-        skippedCount += 1
+      guard let identity = makeIdentity(for: fileURL, snapshot: snapshot) else {
+        issueCount += 1
         continue
       }
 
@@ -146,9 +209,9 @@ public actor DirectoryScanner: DirectoryScanning {
           url: fileURL.standardizedFileURL,
           filename: fileURL.lastPathComponent,
           contentType: contentType.identifier,
-          fileSize: Int64(values.fileSize ?? 0),
-          createdAt: values.creationDate,
-          modifiedAt: values.contentModificationDate,
+          fileSize: Int64(snapshot.fileSize ?? 0),
+          createdAt: snapshot.createdAt,
+          modifiedAt: snapshot.modifiedAt,
           pixelWidth: dimensions?.width,
           pixelHeight: dimensions?.height
         )
@@ -164,17 +227,17 @@ public actor DirectoryScanner: DirectoryScanning {
 
   private func makeIdentity(
     for url: URL,
-    values: URLResourceValues
+    snapshot: FileResourceSnapshot
   ) -> AssetID? {
     guard
-      let fileIdentifier = values.fileResourceIdentifier,
-      let volumeIdentifier = values.volumeIdentifier
+      let fileIdentifier = snapshot.fileIdentifier,
+      let volumeIdentifier = snapshot.volumeIdentifier
     else {
       return nil
     }
     return AssetID(
-      volumeIdentifier: String(describing: volumeIdentifier),
-      fileIdentifier: String(describing: fileIdentifier)
+      volumeIdentifier: volumeIdentifier,
+      fileIdentifier: fileIdentifier
     )
   }
 

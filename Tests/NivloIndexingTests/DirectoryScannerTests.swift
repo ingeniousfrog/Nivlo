@@ -107,6 +107,80 @@ struct DirectoryScannerTests {
     #expect(summary.removedCount == 0)
     #expect(assets.map(\.filename).sorted() == ["hidden.png", "visible.png"])
   }
+
+  @Test("missing stable identity preserves existing assets")
+  func missingIdentityPreservesExistingAssets() async throws {
+    let fixture = try TemporaryDirectory()
+    let visibleURL = fixture.url.appending(path: "visible.png")
+    let hiddenURL = fixture.url.appending(path: "hidden.png")
+    try makeImage(at: visibleURL)
+    try makeImage(at: hiddenURL)
+    let repository = InMemoryAssetRepository()
+    _ = try await DirectoryScanner(repository: repository).scan(rootURL: fixture.url)
+    let partialScanner = DirectoryScanner(
+      repository: repository,
+      contentLister: DirectoryContentListerStub(
+        result: DirectoryListing(urls: [visibleURL], issueCount: 0)
+      ),
+      resourceReader: FileResourceReaderStub(
+        snapshots: [
+          visibleURL: FileResourceSnapshot(
+            isRegularFile: true,
+            contentType: .png,
+            fileSize: 1,
+            createdAt: nil,
+            modifiedAt: nil,
+            fileIdentifier: nil,
+            volumeIdentifier: "volume"
+          )
+        ]
+      )
+    )
+
+    let summary = try await partialScanner.scan(rootURL: fixture.url)
+    let assets = await repository.assets()
+
+    #expect(summary.issueCount == 1)
+    #expect(summary.removedCount == 0)
+    #expect(assets.map(\.filename).sorted() == ["hidden.png", "visible.png"])
+  }
+
+  @Test("missing content type preserves existing assets")
+  func missingContentTypePreservesExistingAssets() async throws {
+    let fixture = try TemporaryDirectory()
+    let visibleURL = fixture.url.appending(path: "visible.png")
+    let hiddenURL = fixture.url.appending(path: "hidden.png")
+    try makeImage(at: visibleURL)
+    try makeImage(at: hiddenURL)
+    let repository = InMemoryAssetRepository()
+    _ = try await DirectoryScanner(repository: repository).scan(rootURL: fixture.url)
+    let partialScanner = DirectoryScanner(
+      repository: repository,
+      contentLister: DirectoryContentListerStub(
+        result: DirectoryListing(urls: [visibleURL], issueCount: 0)
+      ),
+      resourceReader: FileResourceReaderStub(
+        snapshots: [
+          visibleURL: FileResourceSnapshot(
+            isRegularFile: true,
+            contentType: nil,
+            fileSize: 1,
+            createdAt: nil,
+            modifiedAt: nil,
+            fileIdentifier: "file",
+            volumeIdentifier: "volume"
+          )
+        ]
+      )
+    )
+
+    let summary = try await partialScanner.scan(rootURL: fixture.url)
+    let assets = await repository.assets()
+
+    #expect(summary.issueCount == 1)
+    #expect(summary.removedCount == 0)
+    #expect(assets.map(\.filename).sorted() == ["hidden.png", "visible.png"])
+  }
 }
 
 private struct DirectoryContentListerStub: DirectoryContentListing {
@@ -116,6 +190,19 @@ private struct DirectoryContentListerStub: DirectoryContentListing {
     -> DirectoryListing
   {
     result
+  }
+}
+
+private struct FileResourceReaderStub: FileResourceReading {
+  let snapshots: [URL: FileResourceSnapshot]
+
+  func snapshot(for url: URL, keys: Set<URLResourceKey>) throws
+    -> FileResourceSnapshot
+  {
+    guard let snapshot = snapshots[url] else {
+      throw FixtureError.couldNotCreateImage
+    }
+    return snapshot
   }
 }
 
