@@ -26,7 +26,8 @@ public enum SQLiteRepositoryError: Error, LocalizedError, Sendable {
 }
 
 public actor SQLiteAssetRepository:
-  AssetRepository, AssetEnrichmentRepository, LibraryRootRepository
+  AssetRepository, AssetEnrichmentRepository, LibraryRootRepository,
+  ProcessingHistoryRepository
 {
   private let connection: SQLiteConnection
 
@@ -88,6 +89,34 @@ public actor SQLiteAssetRepository:
     return assets
   }
 
+  public func searchAssets(matching query: String) throws -> [ImageAsset] {
+    let normalizedQuery = ftsQuery(query)
+    guard !normalizedQuery.isEmpty else {
+      return try assets()
+    }
+    let sql = """
+      SELECT a.volume_id, a.file_id, a.path, a.filename, a.content_type,
+             a.file_size, a.created_at, a.modified_at,
+             a.pixel_width, a.pixel_height
+      FROM asset_search_fts s
+      JOIN assets a
+        ON a.volume_id = s.volume_id
+       AND a.file_id = s.file_id
+      WHERE asset_search_fts MATCH ?
+      ORDER BY rank, a.path ASC;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(normalizedQuery, at: 1, to: statement, sql: sql)
+
+    var assets: [ImageAsset] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      assets.append(try decodeAsset(from: statement))
+    }
+    try requireFinished(statement, sql: sql)
+    return assets
+  }
+
   public func replaceAssets(
     in rootURL: URL,
     with assets: [ImageAsset]
@@ -109,6 +138,7 @@ public actor SQLiteAssetRepository:
       let removedIDs = existingIDs.subtracting(replacementIDs)
       try deleteAssets(removedIDs)
       try writeAssets(assets, rootPath: rootPath)
+      try upsertSearchAssets(assets)
       try execute("COMMIT;")
       return removedIDs.count
     } catch {
@@ -127,6 +157,7 @@ public actor SQLiteAssetRepository:
         assets,
         rootPath: rootURL.standardizedFileURL.path
       )
+      try upsertSearchAssets(assets)
       try execute("COMMIT;")
     } catch {
       try? execute("ROLLBACK;")
@@ -202,6 +233,71 @@ public actor SQLiteAssetRepository:
     defer { sqlite3_finalize(statement) }
     try bind(id.uuidString, at: 1, to: statement, sql: sql)
     try stepToCompletion(statement, sql: sql)
+  }
+
+  public func appendProcessingHistory(
+    _ records: [ProcessingHistoryRecord]
+  ) throws {
+    guard !records.isEmpty else {
+      return
+    }
+    let sql = """
+      INSERT INTO processing_history (
+          id, volume_id, file_id, operation, output_path,
+          parameters_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+          volume_id = excluded.volume_id,
+          file_id = excluded.file_id,
+          operation = excluded.operation,
+          output_path = excluded.output_path,
+          parameters_json = excluded.parameters_json,
+          created_at = excluded.created_at;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try execute("BEGIN IMMEDIATE TRANSACTION;")
+    do {
+      for record in records {
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
+        try bind(record.id.uuidString, at: 1, to: statement, sql: sql)
+        try bind(record.sourceAssetID.volumeIdentifier, at: 2, to: statement, sql: sql)
+        try bind(record.sourceAssetID.fileIdentifier, at: 3, to: statement, sql: sql)
+        try bind(record.operation.rawValue, at: 4, to: statement, sql: sql)
+        try bind(record.outputURL.standardizedFileURL.path, at: 5, to: statement, sql: sql)
+        try bind(try JSONEncoder().encode(record.parameters), at: 6, to: statement, sql: sql)
+        sqlite3_bind_double(statement, 7, record.createdAt.timeIntervalSince1970)
+        try stepToCompletion(statement, sql: sql)
+      }
+      try execute("COMMIT;")
+    } catch {
+      try? execute("ROLLBACK;")
+      throw error
+    }
+  }
+
+  public func processingHistory(
+    for assetID: AssetID
+  ) throws -> [ProcessingHistoryRecord] {
+    let sql = """
+      SELECT id, volume_id, file_id, operation, output_path,
+             parameters_json, created_at
+      FROM processing_history
+      WHERE volume_id = ? AND file_id = ?
+      ORDER BY created_at ASC, id ASC;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+    try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+
+    var records: [ProcessingHistoryRecord] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      records.append(try decodeProcessingHistory(from: statement, sql: sql))
+    }
+    try requireFinished(statement, sql: sql)
+    return records
   }
 
   public func enrichments() throws -> [AssetEnrichment] {
@@ -320,6 +416,7 @@ public actor SQLiteAssetRepository:
           enrichment.indexedAt.timeIntervalSince1970
         )
         try stepToCompletion(statement, sql: sql)
+        try upsertSearchEnrichment(enrichment)
       }
       try execute("COMMIT;")
     } catch {
@@ -378,7 +475,112 @@ public actor SQLiteAssetRepository:
       try bind(identity.volumeIdentifier, at: 1, to: statement, sql: sql)
       try bind(identity.fileIdentifier, at: 2, to: statement, sql: sql)
       try stepToCompletion(statement, sql: sql)
+      try deleteSearchAsset(identity)
     }
+  }
+
+  private func upsertSearchAssets(_ assets: [ImageAsset]) throws {
+    for asset in assets {
+      try replaceSearchRow(assetID: asset.id) {
+        [
+          asset.filename,
+          asset.url.path,
+          asset.contentType,
+          AssetSourceClassifier.classify(asset.url).rawValue,
+        ]
+        .joined(separator: " ")
+      }
+    }
+  }
+
+  private func upsertSearchEnrichment(_ enrichment: AssetEnrichment) throws {
+    try upsertSearchRow(assetID: enrichment.assetID) {
+      [
+        enrichment.exif.cameraMake,
+        enrichment.exif.cameraModel,
+        enrichment.exif.lensModel,
+        enrichment.exif.ocrText,
+        enrichment.exif.keywords.joined(separator: " "),
+        enrichment.exif.dominantColors.joined(separator: " "),
+      ]
+      .compactMap { $0 }
+      .joined(separator: " ")
+    }
+  }
+
+  private func upsertSearchRow(
+    assetID: AssetID,
+    text: () -> String
+  ) throws {
+    let existing = try searchText(for: assetID)
+    let merged = [existing, text()]
+      .compactMap { $0 }
+      .joined(separator: " ")
+    let sql = """
+      INSERT INTO asset_search_fts(volume_id, file_id, text)
+      VALUES (?, ?, ?);
+      """
+    try deleteSearchAsset(assetID)
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+    try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+    try bind(merged, at: 3, to: statement, sql: sql)
+    try stepToCompletion(statement, sql: sql)
+  }
+
+  private func replaceSearchRow(
+    assetID: AssetID,
+    text: () -> String
+  ) throws {
+    let sql = """
+      INSERT INTO asset_search_fts(volume_id, file_id, text)
+      VALUES (?, ?, ?);
+      """
+    try deleteSearchAsset(assetID)
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+    try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+    try bind(text(), at: 3, to: statement, sql: sql)
+    try stepToCompletion(statement, sql: sql)
+  }
+
+  private func searchText(for assetID: AssetID) throws -> String? {
+    let sql = """
+      SELECT text FROM asset_search_fts
+      WHERE volume_id = ? AND file_id = ?
+      LIMIT 1;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+    try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+      try requireFinished(statement, sql: sql)
+      return nil
+    }
+    return text(at: 0, from: statement)
+  }
+
+  private func deleteSearchAsset(_ assetID: AssetID) throws {
+    let sql = """
+      DELETE FROM asset_search_fts
+      WHERE volume_id = ? AND file_id = ?;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+    try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+    try stepToCompletion(statement, sql: sql)
+  }
+
+  private func ftsQuery(_ query: String) -> String {
+    query
+      .split { !$0.isLetter && !$0.isNumber }
+      .map { String($0) }
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
   }
 
   private func writeAssets(
@@ -443,6 +645,41 @@ public actor SQLiteAssetRepository:
       modifiedAt: date(at: 7, from: statement),
       pixelWidth: integer(at: 8, from: statement),
       pixelHeight: integer(at: 9, from: statement)
+    )
+  }
+
+  private func decodeProcessingHistory(
+    from statement: OpaquePointer,
+    sql: String
+  ) throws -> ProcessingHistoryRecord {
+    let idString = text(at: 0, from: statement)
+    guard let id = UUID(uuidString: idString) else {
+      throw SQLiteRepositoryError.executionFailed(
+        sql: sql,
+        message: "Invalid processing history UUID: \(idString)"
+      )
+    }
+    let operationText = text(at: 3, from: statement)
+    guard let operation = ProcessingOperation(rawValue: operationText) else {
+      throw SQLiteRepositoryError.executionFailed(
+        sql: sql,
+        message: "Invalid processing operation: \(operationText)"
+      )
+    }
+    let parameters = try JSONDecoder().decode(
+      [String: String].self,
+      from: data(at: 5, from: statement)
+    )
+    return ProcessingHistoryRecord(
+      id: id,
+      sourceAssetID: AssetID(
+        volumeIdentifier: text(at: 1, from: statement),
+        fileIdentifier: text(at: 2, from: statement)
+      ),
+      operation: operation,
+      outputURL: URL(filePath: text(at: 4, from: statement)),
+      parameters: parameters,
+      createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))
     )
   }
 
@@ -677,6 +914,26 @@ public actor SQLiteAssetRepository:
         CREATE INDEX IF NOT EXISTS asset_enrichments_exact_hash_idx
         ON asset_enrichments(exact_hash);
 
+        CREATE VIRTUAL TABLE IF NOT EXISTS asset_search_fts
+        USING fts5(
+            volume_id UNINDEXED,
+            file_id UNINDEXED,
+            text
+        );
+
+        CREATE TABLE IF NOT EXISTS processing_history (
+            id TEXT PRIMARY KEY,
+            volume_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            output_path TEXT NOT NULL,
+            parameters_json BLOB NOT NULL,
+            created_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS processing_history_asset_idx
+        ON processing_history(volume_id, file_id, created_at);
+
         CREATE TRIGGER IF NOT EXISTS assets_invalidate_enrichment
         AFTER UPDATE OF file_size, modified_at ON assets
         WHEN OLD.file_size != NEW.file_size
@@ -690,6 +947,8 @@ public actor SQLiteAssetRepository:
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
         """
     )
   }

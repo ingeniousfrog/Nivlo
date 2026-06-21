@@ -18,13 +18,19 @@ final class LibraryModel: ObservableObject {
   @Published private(set) var statusMessage = "Choose a folder to begin."
   @Published private(set) var enrichmentStatusMessage = "Rich index pending"
   @Published private(set) var spotlightStatusMessage = "Checking Spotlight…"
+  @Published private(set) var validationStatusMessage = "Validation idle"
+  @Published private(set) var processingStatusMessage = "Processing idle"
   @Published var errorMessage: String?
 
-  private let repository: any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
+  private let repository:
+    any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
+      & ProcessingHistoryRepository
   private let scanner: DirectoryScanner
   private let rootAccessManager: LibraryRootAccessManager
   private let enrichmentPipeline: ImageEnrichmentPipeline
   private let fileEventMonitor: LibraryRootFileEventMonitor
+  private let validationScheduler: IndexValidationScheduler
+  private let batchProcessor = ImageBatchProcessor()
   private let spotlightSource = SpotlightCandidateSource()
 
   init() {
@@ -34,6 +40,7 @@ final class LibraryModel: ObservableObject {
     rootAccessManager = dependencies.rootAccessManager
     enrichmentPipeline = dependencies.enrichmentPipeline
     fileEventMonitor = dependencies.fileEventMonitor
+    validationScheduler = dependencies.validationScheduler
     if let startupError = dependencies.startupError {
       errorMessage = startupError
       statusMessage = "Index persistence unavailable"
@@ -56,6 +63,7 @@ final class LibraryModel: ObservableObject {
       )
       updateSimilarityGroups()
       await startWatchingActiveRoots()
+      await startBackgroundValidation()
       if let repositoryError = restoration.repositoryError {
         errorMessage = repositoryError
         statusMessage = "Couldn’t restore folder access"
@@ -88,6 +96,7 @@ final class LibraryModel: ObservableObject {
       roots = try await repository.libraryRoots()
       assets = try await repository.assets()
       await startWatchingActiveRoots()
+      await startBackgroundValidation()
       statusMessage = scanStatus(summary)
     } catch {
       errorMessage = error.localizedDescription
@@ -126,20 +135,79 @@ final class LibraryModel: ObservableObject {
     await scanActiveRoot(rootURL)
   }
 
-  func filteredAssets(searchText: String) -> [ImageAsset] {
-    AssetQuery(searchText: searchText)
-      .apply(to: assets, enrichments: enrichments)
+  func filteredAssets(query: AssetQuery) -> [ImageAsset] {
+    query.apply(to: assets, enrichments: enrichments)
   }
 
   func smartAssets(
     _ smartView: SmartAssetView,
-    searchText: String
+    query: AssetQuery
   ) -> [ImageAsset] {
-    AssetQuery(searchText: searchText)
-      .apply(
-        to: smartView.assets(in: assets),
-        enrichments: enrichments
+    query.apply(
+      to: smartView.assets(in: assets),
+      enrichments: enrichments
+    )
+  }
+
+  func exportAssets(
+    assetIDs: Set<AssetID>,
+    to outputDirectory: URL
+  ) async {
+    let selectedAssets = assets.filter { assetIDs.contains($0.id) }
+    guard !selectedAssets.isEmpty else {
+      processingStatusMessage = "No images selected"
+      return
+    }
+    processingStatusMessage = "Exporting \(selectedAssets.count) images…"
+    do {
+      let outputs = try await batchProcessor.process(
+        ImageBatchRequest(
+          assets: selectedAssets,
+          outputDirectory: outputDirectory,
+          format: .jpeg,
+          compressionQuality: 0.85,
+          filenameTemplate: "{name}"
+        )
       )
+      let records = outputs.map { output in
+        ProcessingHistoryRecord(
+          id: UUID(),
+          sourceAssetID: output.sourceAssetID,
+          operation: .export,
+          outputURL: output.url,
+          parameters: [
+            "format": "jpeg",
+            "compressionQuality": "0.85",
+          ],
+          createdAt: Date()
+        )
+      }
+      try await repository.appendProcessingHistory(records)
+      processingStatusMessage = "Exported \(outputs.count) images"
+    } catch {
+      processingStatusMessage = "Export failed"
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func validateLibraryNow() async {
+    validationStatusMessage = "Validating indexed folders…"
+    do {
+      let summary = try await validationScheduler.validateNow(
+        rootURLs: await rootAccessManager.activeURLs()
+      )
+      if let lastValidatedAt = summary.lastValidatedAt {
+        validationStatusMessage =
+          "Validated \(summary.validatedRootCount) folders · \(summary.failureCount) failed · \(lastValidatedAt.formatted())"
+      } else {
+        validationStatusMessage = "No active folders to validate"
+      }
+      assets = try await repository.assets()
+      await enrichAccessibleAssets()
+    } catch {
+      validationStatusMessage = "Validation failed"
+      errorMessage = error.localizedDescription
+    }
   }
 
   private func scanActiveRoot(_ rootURL: URL) async {
@@ -153,6 +221,7 @@ final class LibraryModel: ObservableObject {
       let summary = try await scanner.scan(rootURL: rootURL)
       assets = try await repository.assets()
       await startWatchingActiveRoots()
+      await startBackgroundValidation()
       statusMessage = scanStatus(summary)
     } catch {
       errorMessage = error.localizedDescription
@@ -169,6 +238,15 @@ final class LibraryModel: ObservableObject {
       errorMessage = error.localizedDescription
       statusMessage = "Folder watching unavailable"
     }
+  }
+
+  private func startBackgroundValidation() async {
+    await validationScheduler.start(
+      rootURLs: { [rootAccessManager] in
+        await rootAccessManager.activeURLs()
+      }
+    )
+    validationStatusMessage = "Background validation scheduled"
   }
 
   private func refreshAfterFileEvents() async {
@@ -271,6 +349,7 @@ final class LibraryModel: ObservableObject {
           watcher: FSEventsFileEventWatcher(),
           scanner: scanner
         ),
+        validationScheduler: IndexValidationScheduler(scanner: scanner),
         startupError: nil
       )
     } catch {
@@ -291,6 +370,7 @@ final class LibraryModel: ObservableObject {
           watcher: FSEventsFileEventWatcher(),
           scanner: scanner
         ),
+        validationScheduler: IndexValidationScheduler(scanner: scanner),
         startupError: error.localizedDescription
       )
     }
@@ -298,11 +378,14 @@ final class LibraryModel: ObservableObject {
 }
 
 private struct LibraryDependencies {
-  let repository: any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
+  let repository:
+    any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
+      & ProcessingHistoryRepository
   let scanner: DirectoryScanner
   let rootAccessManager: LibraryRootAccessManager
   let enrichmentPipeline: ImageEnrichmentPipeline
   let fileEventMonitor: LibraryRootFileEventMonitor
+  let validationScheduler: IndexValidationScheduler
   let startupError: String?
 }
 

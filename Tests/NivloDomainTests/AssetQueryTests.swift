@@ -73,6 +73,84 @@ struct AssetQueryTests {
     #expect(result == [matching])
   }
 
+  @Test("classifies common source locations")
+  func classifiesSourceLocations() {
+    #expect(
+      AssetSourceClassifier.classify(
+        URL(filePath: "/Users/example/Downloads/asset.png")
+      ) == .downloads
+    )
+    #expect(
+      AssetSourceClassifier.classify(
+        URL(filePath: "/Users/example/Desktop/asset.png")
+      ) == .desktop
+    )
+    #expect(
+      AssetSourceClassifier.classify(
+        URL(filePath: "/Volumes/External/project/asset.png")
+      ) == .externalVolume
+    )
+    #expect(
+      AssetSourceClassifier.classify(
+        URL(filePath: "/Users/example/work/app/.git/logo.png")
+      ) == .project
+    )
+  }
+
+  @Test("filters by date color keyword OCR and source")
+  func filtersByRichMetadata() {
+    let date = Date(timeIntervalSince1970: 2_000)
+    let asset = makeAsset(
+      filename: "card.png",
+      url: URL(filePath: "/Users/example/Downloads/card.png"),
+      createdAt: date,
+      modifiedAt: date
+    )
+    let enrichment = makeEnrichment(
+      assetID: asset.id,
+      ocrText: "Invoice ABC",
+      keywords: ["finance"],
+      dominantColors: ["#2040A0"]
+    )
+    let query = AssetQuery(
+      searchText: "invoice #2040a0",
+      createdAfter: Date(timeIntervalSince1970: 1_000),
+      modifiedBefore: Date(timeIntervalSince1970: 3_000),
+      colors: ["#2040a0"],
+      keywords: ["finance"],
+      sources: [.downloads]
+    )
+
+    let result = query.apply(to: [asset], enrichments: [asset.id: enrichment])
+
+    #expect(result == [asset])
+  }
+
+  @Test("sorts assets by metadata")
+  func sortsAssetsByMetadata() {
+    let small = makeAsset(
+      filename: "b.png",
+      url: URL(filePath: "/tmp/b.png"),
+      fileSize: 10,
+      modifiedAt: Date(timeIntervalSince1970: 200)
+    )
+    let large = makeAsset(
+      filename: "a.png",
+      url: URL(filePath: "/tmp/a.png"),
+      fileSize: 20,
+      modifiedAt: Date(timeIntervalSince1970: 100)
+    )
+
+    #expect(
+      AssetQuery(sort: .fileSize(order: .descending))
+        .apply(to: [small, large], enrichments: [:]) == [large, small]
+    )
+    #expect(
+      AssetQuery(sort: .filename(order: .ascending))
+        .apply(to: [small, large], enrichments: [:]) == [large, small]
+    )
+  }
+
   @Test("builds smart views from indexed metadata")
   func buildsSmartViews() {
     let now = Date(timeIntervalSince1970: 2_000)
@@ -127,7 +205,12 @@ private func makeAsset(
   )
 }
 
-private func makeEnrichment(assetID: AssetID) -> AssetEnrichment {
+private func makeEnrichment(
+  assetID: AssetID,
+  ocrText: String = "launch hero image",
+  keywords: [String] = ["marketing"],
+  dominantColors: [String] = []
+) -> AssetEnrichment {
   AssetEnrichment(
     assetID: assetID,
     exactHash: "hash",
@@ -143,9 +226,9 @@ private func makeEnrichment(assetID: AssetID) -> AssetEnrichment {
       focalLength: nil,
       aperture: nil,
       exposureTime: nil,
-      ocrText: "launch hero image",
-      keywords: ["marketing"],
-      dominantColors: []
+      ocrText: ocrText,
+      keywords: keywords,
+      dominantColors: dominantColors
     ),
     indexedAt: Date(timeIntervalSince1970: 1_000)
   )

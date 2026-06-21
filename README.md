@@ -15,6 +15,8 @@ Phase 1 is under active development. The current vertical slice can:
 - restore valid folder access across launches and isolate unavailable drives;
 - surface up to 500 lightweight image candidates from Spotlight metadata;
 - store basic file and pixel metadata in a persistent SQLite index;
+- classify assets by likely source such as Desktop, Downloads, Documents,
+  external volumes, projects, and other paths;
 - generate bounded local thumbnail cache files without altering originals;
 - extract TIFF/EXIF camera metadata;
 - run best-effort Vision OCR and store OCR text when macOS can read it;
@@ -33,14 +35,14 @@ Phase 1 is under active development. The current vertical slice can:
   images, and large files;
 - process images into an output directory with output-only conversion,
   compression quality, resizing, batch naming, and overwrite-safe suffixes;
+- persist processing/export history for generated derivatives;
 - copy paths or Markdown image references, reveal files in Finder, and drag
   file URLs out of the grid.
 
-Remaining Phase 1 work is mostly UI polish and deeper indexing: richer filter
-controls, project/source classification, low-priority validation scheduling,
-external-volume remount recovery, and exposing batch processing through the
-SwiftUI selection flow. Spotlight results are discovery candidates only; Nivlo
-builds its complete index only after the user authorizes a folder.
+Remaining Phase 1 work is mostly polish: deeper operation-history UI,
+additional batch-action presets, and real-world tuning for external-volume
+remount behavior. Spotlight results are discovery candidates only; Nivlo builds
+its complete index only after the user authorizes a folder.
 
 ## Run locally
 

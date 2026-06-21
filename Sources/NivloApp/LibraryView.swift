@@ -15,8 +15,17 @@ struct LibraryView: View {
 
   @StateObject private var model = LibraryModel()
   @State private var isChoosingFolder = false
+  @State private var isChoosingExportFolder = false
   @State private var selection: SectionSelection? = .allImages
   @State private var searchText = ""
+  @State private var selectedAssetIDs: Set<AssetID> = []
+  @State private var folderFilter: String?
+  @State private var sourceFilter: AssetSource?
+  @State private var formatFilter: FormatFilter = .all
+  @State private var timeFilter: TimeFilter = .all
+  @State private var sizeFilter: SizeFilter = .all
+  @State private var dimensionFilter: DimensionFilter = .all
+  @State private var sortOption: SortOption = .path
 
   private let columns = [
     GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 16)
@@ -35,6 +44,57 @@ struct LibraryView: View {
         } label: {
           Label("Add Folder", systemImage: "folder.badge.plus")
         }
+      }
+      ToolbarItem {
+        Menu {
+          Picker("Folder", selection: $folderFilter) {
+            Text("All Folders").tag(nil as String?)
+            ForEach(model.roots) { root in
+              Text(root.displayName).tag(root.pathHint as String?)
+            }
+          }
+          Picker("Source", selection: $sourceFilter) {
+            Text("All Sources").tag(nil as AssetSource?)
+            ForEach(AssetSource.allCases, id: \.self) { source in
+              Text(source.title).tag(source as AssetSource?)
+            }
+          }
+          Picker("Format", selection: $formatFilter) {
+            ForEach(FormatFilter.allCases) { filter in
+              Text(filter.title).tag(filter)
+            }
+          }
+          Picker("Time", selection: $timeFilter) {
+            ForEach(TimeFilter.allCases) { filter in
+              Text(filter.title).tag(filter)
+            }
+          }
+          Picker("Size", selection: $sizeFilter) {
+            ForEach(SizeFilter.allCases) { filter in
+              Text(filter.title).tag(filter)
+            }
+          }
+          Picker("Dimensions", selection: $dimensionFilter) {
+            ForEach(DimensionFilter.allCases) { filter in
+              Text(filter.title).tag(filter)
+            }
+          }
+          Picker("Sort", selection: $sortOption) {
+            ForEach(SortOption.allCases) { option in
+              Text(option.title).tag(option)
+            }
+          }
+        } label: {
+          Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+        }
+      }
+      ToolbarItem {
+        Button {
+          isChoosingExportFolder = true
+        } label: {
+          Label("Export Selected", systemImage: "square.and.arrow.up")
+        }
+        .disabled(selectedAssetIDs.isEmpty)
       }
     }
     .searchable(
@@ -58,6 +118,19 @@ struct LibraryView: View {
       }
       Task {
         await model.addFolder(url)
+      }
+    }
+    .fileImporter(
+      isPresented: $isChoosingExportFolder,
+      allowedContentTypes: [.folder],
+      allowsMultipleSelection: false
+    ) { result in
+      guard case .success(let urls) = result, let url = urls.first else {
+        return
+      }
+      Task {
+        await model.exportAssets(assetIDs: selectedAssetIDs, to: url)
+        selectedAssetIDs = []
       }
     }
     .alert(
@@ -118,9 +191,25 @@ struct LibraryView: View {
             ? "wand.and.stars"
             : "photo.badge.checkmark"
         )
+        Label(
+          model.validationStatusMessage,
+          systemImage: "checkmark.shield"
+        )
+        Label(
+          model.processingStatusMessage,
+          systemImage: "square.and.arrow.up"
+        )
       }
       if !model.roots.isEmpty {
         Section("Folders") {
+          Button {
+            Task {
+              await model.validateLibraryNow()
+            }
+          } label: {
+            Label("Validate Index", systemImage: "checkmark.shield")
+          }
+          .buttonStyle(.plain)
           ForEach(model.roots) { root in
             Button {
               Task {
@@ -142,7 +231,7 @@ struct LibraryView: View {
     systemImage: String
   ) -> some View {
     Label(smartView.title, systemImage: systemImage)
-      .badge(model.smartAssets(smartView, searchText: "").count)
+      .badge(model.smartAssets(smartView, query: AssetQuery()).count)
       .tag(SectionSelection.smart(smartView))
   }
 
@@ -168,7 +257,7 @@ struct LibraryView: View {
     } else if case .smart(let smartView) = selection {
       assetGridContent(
         title: smartView.title,
-        assets: model.smartAssets(smartView, searchText: searchText),
+        assets: model.smartAssets(smartView, query: currentQuery),
         emptyTitle: "No \(smartView.title)",
         emptyDescription: "Nivlo will show matching indexed images here."
       )
@@ -186,11 +275,27 @@ struct LibraryView: View {
     } else {
       assetGridContent(
         title: "All Images",
-        assets: model.filteredAssets(searchText: searchText),
+        assets: model.filteredAssets(query: currentQuery),
         emptyTitle: "No Matching Images",
         emptyDescription: "Try a different filename, path, OCR text, or keyword."
       )
     }
+  }
+
+  private var currentQuery: AssetQuery {
+    let timeBounds = timeFilter.bounds(now: Date())
+    return AssetQuery(
+      searchText: searchText,
+      folders: folderFilter.map { [URL(filePath: $0)] } ?? [],
+      contentTypes: formatFilter.contentTypes,
+      minimumFileSize: sizeFilter.minimumFileSize,
+      minimumPixelWidth: dimensionFilter.minimumPixelWidth,
+      minimumPixelHeight: dimensionFilter.minimumPixelHeight,
+      createdAfter: timeBounds.createdAfter,
+      modifiedAfter: timeBounds.modifiedAfter,
+      sources: sourceFilter.map { Set([$0]) } ?? [],
+      sort: sortOption.assetSort
+    )
   }
 
   @ViewBuilder
@@ -213,13 +318,25 @@ struct LibraryView: View {
           ForEach(assets) { asset in
             AssetCard(
               asset: asset,
-              enrichment: model.enrichments[asset.id]
+              enrichment: model.enrichments[asset.id],
+              isSelected: selectedAssetIDs.contains(asset.id)
             )
+            .onTapGesture {
+              toggleSelection(asset.id)
+            }
           }
         }
         .padding(24)
       }
       .navigationTitle(title)
+    }
+  }
+
+  private func toggleSelection(_ assetID: AssetID) {
+    if selectedAssetIDs.contains(assetID) {
+      selectedAssetIDs.remove(assetID)
+    } else {
+      selectedAssetIDs.insert(assetID)
     }
   }
 
@@ -338,12 +455,22 @@ private struct SpotlightCandidateCard: View {
 private struct AssetCard: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
+  var isSelected = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      thumbnail
-        .aspectRatio(4 / 3, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+      ZStack(alignment: .topTrailing) {
+        thumbnail
+          .aspectRatio(4 / 3, contentMode: .fit)
+          .clipShape(RoundedRectangle(cornerRadius: 12))
+        if isSelected {
+          Image(systemName: "checkmark.circle.fill")
+            .font(.title2)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, Color.accentColor)
+            .padding(8)
+        }
+      }
       Text(asset.filename)
         .font(.headline)
         .lineLimit(1)
@@ -359,6 +486,10 @@ private struct AssetCard: View {
     }
     .padding(10)
     .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+    .overlay {
+      RoundedRectangle(cornerRadius: 16)
+        .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
+    }
     .draggable(asset.url)
     .contextMenu {
       Button("Show in Finder") {
@@ -374,7 +505,7 @@ private struct AssetCard: View {
           .replacingOccurrences(of: "]", with: "\\]")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
-          "![\(altText)](\(asset.url.path))",
+          "![\(altText)](<\(asset.url.path.replacingOccurrences(of: ">", with: "%3E"))>)",
           forType: .string
         )
       }
@@ -396,6 +527,217 @@ private struct AssetCard: View {
           .font(.largeTitle)
           .foregroundStyle(.secondary)
       }
+    }
+  }
+}
+
+private enum SortOption: String, CaseIterable, Identifiable {
+  case path
+  case filename
+  case newestModified
+  case oldestModified
+  case largest
+  case dimensions
+  case source
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .path:
+      "Path"
+    case .filename:
+      "Filename"
+    case .newestModified:
+      "Newest Modified"
+    case .oldestModified:
+      "Oldest Modified"
+    case .largest:
+      "Largest"
+    case .dimensions:
+      "Dimensions"
+    case .source:
+      "Source"
+    }
+  }
+
+  var assetSort: AssetSort {
+    switch self {
+    case .path:
+      .path(order: .ascending)
+    case .filename:
+      .filename(order: .ascending)
+    case .newestModified:
+      .modifiedAt(order: .descending)
+    case .oldestModified:
+      .modifiedAt(order: .ascending)
+    case .largest:
+      .fileSize(order: .descending)
+    case .dimensions:
+      .dimensions(order: .descending)
+    case .source:
+      .source(order: .ascending)
+    }
+  }
+}
+
+private enum FormatFilter: String, CaseIterable, Identifiable {
+  case all
+  case png
+  case jpeg
+  case webp
+  case avif
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all:
+      "All Formats"
+    case .png:
+      "PNG"
+    case .jpeg:
+      "JPEG"
+    case .webp:
+      "WebP"
+    case .avif:
+      "AVIF"
+    }
+  }
+
+  var contentTypes: Set<String> {
+    switch self {
+    case .all:
+      []
+    case .png:
+      ["public.png"]
+    case .jpeg:
+      ["public.jpeg"]
+    case .webp:
+      ["org.webmproject.webp"]
+    case .avif:
+      ["public.avif"]
+    }
+  }
+}
+
+private enum TimeFilter: String, CaseIterable, Identifiable {
+  case all
+  case createdLast14Days
+  case modifiedLast14Days
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all:
+      "Any Time"
+    case .createdLast14Days:
+      "Created Last 14 Days"
+    case .modifiedLast14Days:
+      "Modified Last 14 Days"
+    }
+  }
+
+  func bounds(now: Date) -> (createdAfter: Date?, modifiedAfter: Date?) {
+    let threshold = now.addingTimeInterval(-14 * 24 * 60 * 60)
+    switch self {
+    case .all:
+      return (nil, nil)
+    case .createdLast14Days:
+      return (threshold, nil)
+    case .modifiedLast14Days:
+      return (nil, threshold)
+    }
+  }
+}
+
+private enum SizeFilter: String, CaseIterable, Identifiable {
+  case all
+  case atLeastOneMB
+  case large
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all:
+      "Any Size"
+    case .atLeastOneMB:
+      "At Least 1 MB"
+    case .large:
+      "Large Files"
+    }
+  }
+
+  var minimumFileSize: Int64? {
+    switch self {
+    case .all:
+      nil
+    case .atLeastOneMB:
+      1_000_000
+    case .large:
+      50_000_000
+    }
+  }
+}
+
+private enum DimensionFilter: String, CaseIterable, Identifiable {
+  case all
+  case atLeastHD
+  case atLeast4K
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all:
+      "Any Dimensions"
+    case .atLeastHD:
+      "At Least HD"
+    case .atLeast4K:
+      "At Least 4K"
+    }
+  }
+
+  var minimumPixelWidth: Int? {
+    switch self {
+    case .all:
+      nil
+    case .atLeastHD:
+      1280
+    case .atLeast4K:
+      3840
+    }
+  }
+
+  var minimumPixelHeight: Int? {
+    switch self {
+    case .all:
+      nil
+    case .atLeastHD:
+      720
+    case .atLeast4K:
+      2160
+    }
+  }
+}
+
+extension AssetSource {
+  fileprivate var title: String {
+    switch self {
+    case .desktop:
+      "Desktop"
+    case .downloads:
+      "Downloads"
+    case .documents:
+      "Documents"
+    case .externalVolume:
+      "External Volume"
+    case .project:
+      "Project"
+    case .other:
+      "Other"
     }
   }
 }

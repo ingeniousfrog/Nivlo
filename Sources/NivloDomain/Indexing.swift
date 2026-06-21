@@ -24,6 +24,7 @@ public struct ScanSummary: Equatable, Sendable {
 
 public protocol AssetRepository: Sendable {
   func assets() async throws -> [ImageAsset]
+  func searchAssets(matching query: String) async throws -> [ImageAsset]
   func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) async throws
   func replaceAssets(in rootURL: URL, with assets: [ImageAsset]) async throws -> Int
   func replaceAssets(

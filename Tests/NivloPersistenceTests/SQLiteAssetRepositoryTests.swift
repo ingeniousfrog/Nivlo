@@ -105,6 +105,92 @@ struct SQLiteAssetRepositoryTests {
     #expect(assets == [nestedReplacement, sibling])
     #expect(finalRemovedCount == 2)
   }
+
+  @Test("searches assets with SQLite FTS metadata")
+  func searchesAssetsWithFTS() async throws {
+    let repository = try SQLiteAssetRepository(databaseURL: temporaryDatabaseURL())
+    let rootURL = URL(filePath: "/tmp/nivlo-library")
+    let asset = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-fts"),
+      url: rootURL.appending(path: "receipt.png")
+    )
+    _ = try await repository.replaceAssets(in: rootURL, with: [asset])
+    try await repository.upsertEnrichments([
+      AssetEnrichment(
+        assetID: asset.id,
+        exactHash: "hash",
+        perceptualHash: 42,
+        thumbnailURL: URL(filePath: "/tmp/thumb.jpg"),
+        exif: AssetEXIF(
+          cameraMake: "NivloCam",
+          cameraModel: "Desk",
+          lensModel: nil,
+          capturedAt: nil,
+          orientation: nil,
+          isoSpeed: nil,
+          focalLength: nil,
+          aperture: nil,
+          exposureTime: nil,
+          ocrText: "Invoice paid",
+          keywords: ["finance"],
+          dominantColors: []
+        ),
+        indexedAt: Date(timeIntervalSince1970: 1_700_000_200)
+      )
+    ])
+
+    let results = try await repository.searchAssets(matching: "invoice finance")
+
+    #expect(results == [asset])
+  }
+
+  @Test("asset metadata refresh removes stale rich search text")
+  func assetRefreshRemovesStaleSearchText() async throws {
+    let repository = try SQLiteAssetRepository(databaseURL: temporaryDatabaseURL())
+    let rootURL = URL(filePath: "/tmp/nivlo-library")
+    let identity = AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-fts")
+    let original = makeAsset(id: identity, url: rootURL.appending(path: "receipt.png"))
+    _ = try await repository.replaceAssets(in: rootURL, with: [original])
+    try await repository.upsertEnrichments([
+      AssetEnrichment(
+        assetID: original.id,
+        exactHash: "hash",
+        perceptualHash: 42,
+        thumbnailURL: URL(filePath: "/tmp/thumb.jpg"),
+        exif: AssetEXIF(
+          cameraMake: nil,
+          cameraModel: nil,
+          lensModel: nil,
+          capturedAt: nil,
+          orientation: nil,
+          isoSpeed: nil,
+          focalLength: nil,
+          aperture: nil,
+          exposureTime: nil,
+          ocrText: "obsolete",
+          keywords: [],
+          dominantColors: []
+        ),
+        indexedAt: Date(timeIntervalSince1970: 1_700_000_200)
+      )
+    ])
+    let refreshed = ImageAsset(
+      id: identity,
+      url: rootURL.appending(path: "receipt.png"),
+      filename: "receipt.png",
+      contentType: "public.png",
+      fileSize: 2_048,
+      createdAt: original.createdAt,
+      modifiedAt: Date(timeIntervalSince1970: 1_700_000_300),
+      pixelWidth: original.pixelWidth,
+      pixelHeight: original.pixelHeight
+    )
+
+    _ = try await repository.replaceAssets(in: rootURL, with: [refreshed])
+    let results = try await repository.searchAssets(matching: "obsolete")
+
+    #expect(results.isEmpty)
+  }
 }
 
 private func temporaryDatabaseURL() -> URL {

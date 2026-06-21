@@ -8,8 +8,14 @@ public struct AssetQuery: Equatable, Sendable {
   public let maximumFileSize: Int64?
   public let minimumPixelWidth: Int?
   public let minimumPixelHeight: Int?
+  public let createdAfter: Date?
+  public let createdBefore: Date?
+  public let modifiedAfter: Date?
+  public let modifiedBefore: Date?
   public let colors: Set<String>
   public let keywords: Set<String>
+  public let sources: Set<AssetSource>
+  public let sort: AssetSort
 
   public init(
     searchText: String = "",
@@ -19,8 +25,14 @@ public struct AssetQuery: Equatable, Sendable {
     maximumFileSize: Int64? = nil,
     minimumPixelWidth: Int? = nil,
     minimumPixelHeight: Int? = nil,
+    createdAfter: Date? = nil,
+    createdBefore: Date? = nil,
+    modifiedAfter: Date? = nil,
+    modifiedBefore: Date? = nil,
     colors: Set<String> = [],
-    keywords: Set<String> = []
+    keywords: Set<String> = [],
+    sources: Set<AssetSource> = [],
+    sort: AssetSort = .path(order: .ascending)
   ) {
     self.searchText = searchText
     self.folders = folders.map(\.standardizedFileURL)
@@ -29,8 +41,14 @@ public struct AssetQuery: Equatable, Sendable {
     self.maximumFileSize = maximumFileSize
     self.minimumPixelWidth = minimumPixelWidth
     self.minimumPixelHeight = minimumPixelHeight
+    self.createdAfter = createdAfter
+    self.createdBefore = createdBefore
+    self.modifiedAfter = modifiedAfter
+    self.modifiedBefore = modifiedBefore
     self.colors = Set(colors.map { $0.lowercased() })
     self.keywords = Set(keywords.map { $0.lowercased() })
+    self.sources = sources
+    self.sort = sort
   }
 
   public func apply(
@@ -47,9 +65,12 @@ public struct AssetQuery: Equatable, Sendable {
         && matchesContentType(asset)
         && matchesFileSize(asset)
         && matchesDimensions(asset)
+        && matchesDates(asset)
         && matchesColors(enrichments[asset.id])
         && matchesKeywords(enrichments[asset.id])
+        && matchesSources(asset)
     }
+    .sorted { sort.areInIncreasingOrder($0, $1) }
   }
 
   private func matchesText(
@@ -66,6 +87,7 @@ public struct AssetQuery: Equatable, Sendable {
       asset.contentType,
       enrichment?.exif.ocrText,
       enrichment?.exif.keywords.joined(separator: " "),
+      enrichment?.exif.dominantColors.joined(separator: " "),
     ]
     .compactMap { $0 }
     .joined(separator: " ")
@@ -122,6 +144,127 @@ public struct AssetQuery: Equatable, Sendable {
       enrichment?.exif.keywords.map { $0.lowercased() } ?? []
     )
     return !availableKeywords.isDisjoint(with: keywords)
+  }
+
+  private func matchesDates(_ asset: ImageAsset) -> Bool {
+    if let createdAfter, (asset.createdAt ?? .distantPast) < createdAfter {
+      return false
+    }
+    if let createdBefore, (asset.createdAt ?? .distantFuture) > createdBefore {
+      return false
+    }
+    if let modifiedAfter, (asset.modifiedAt ?? .distantPast) < modifiedAfter {
+      return false
+    }
+    if let modifiedBefore, (asset.modifiedAt ?? .distantFuture) > modifiedBefore {
+      return false
+    }
+    return true
+  }
+
+  private func matchesSources(_ asset: ImageAsset) -> Bool {
+    sources.isEmpty || sources.contains(AssetSourceClassifier.classify(asset.url))
+  }
+}
+
+public enum AssetSource: String, CaseIterable, Codable, Sendable {
+  case desktop
+  case downloads
+  case documents
+  case externalVolume
+  case project
+  case other
+}
+
+public enum AssetSourceClassifier: Sendable {
+  public static func classify(_ url: URL) -> AssetSource {
+    let components = url.standardizedFileURL.pathComponents
+    if components.contains(".git")
+      || components.contains("Package.swift")
+      || components.contains("node_modules")
+    {
+      return .project
+    }
+    if components.starts(with: ["/", "Volumes"]) {
+      return .externalVolume
+    }
+    if components.contains("Downloads") {
+      return .downloads
+    }
+    if components.contains("Desktop") {
+      return .desktop
+    }
+    if components.contains("Documents") {
+      return .documents
+    }
+    return .other
+  }
+}
+
+public enum SortOrder: Sendable, Equatable {
+  case ascending
+  case descending
+}
+
+public enum AssetSort: Equatable, Sendable {
+  case filename(order: SortOrder)
+  case path(order: SortOrder)
+  case fileSize(order: SortOrder)
+  case createdAt(order: SortOrder)
+  case modifiedAt(order: SortOrder)
+  case dimensions(order: SortOrder)
+  case source(order: SortOrder)
+
+  func areInIncreasingOrder(_ first: ImageAsset, _ second: ImageAsset) -> Bool {
+    switch self {
+    case .filename(let order):
+      compare(first.filename.localizedStandardCompare(second.filename), order: order)
+    case .path(let order):
+      compare(first.url.path.localizedStandardCompare(second.url.path), order: order)
+    case .fileSize(let order):
+      compare(first.fileSize, second.fileSize, order: order)
+    case .createdAt(let order):
+      compare(first.createdAt ?? .distantPast, second.createdAt ?? .distantPast, order: order)
+    case .modifiedAt(let order):
+      compare(first.modifiedAt ?? .distantPast, second.modifiedAt ?? .distantPast, order: order)
+    case .dimensions(let order):
+      compare(pixelArea(first), pixelArea(second), order: order)
+    case .source(let order):
+      compare(
+        AssetSourceClassifier.classify(first.url).rawValue
+          .localizedStandardCompare(AssetSourceClassifier.classify(second.url).rawValue),
+        order: order
+      )
+    }
+  }
+
+  private func pixelArea(_ asset: ImageAsset) -> Int {
+    (asset.pixelWidth ?? 0) * (asset.pixelHeight ?? 0)
+  }
+
+  private func compare<T: Comparable>(
+    _ first: T,
+    _ second: T,
+    order: SortOrder
+  ) -> Bool {
+    switch order {
+    case .ascending:
+      first < second
+    case .descending:
+      first > second
+    }
+  }
+
+  private func compare(
+    _ result: ComparisonResult,
+    order: SortOrder
+  ) -> Bool {
+    switch order {
+    case .ascending:
+      result == .orderedAscending
+    case .descending:
+      result == .orderedDescending
+    }
   }
 }
 

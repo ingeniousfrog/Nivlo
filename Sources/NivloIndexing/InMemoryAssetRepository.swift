@@ -2,11 +2,13 @@ import Foundation
 import NivloDomain
 
 public actor InMemoryAssetRepository:
-  AssetRepository, AssetEnrichmentRepository, LibraryRootRepository
+  AssetRepository, AssetEnrichmentRepository, LibraryRootRepository,
+  ProcessingHistoryRepository
 {
   private var storedAssets: [AssetID: ImageAsset]
   private var storedEnrichments: [AssetID: AssetEnrichment] = [:]
   private var storedRoots: [UUID: LibraryRoot] = [:]
+  private var storedProcessingHistory: [AssetID: [ProcessingHistoryRecord]] = [:]
 
   public init(assets: [ImageAsset] = []) {
     storedAssets = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
@@ -14,6 +16,11 @@ public actor InMemoryAssetRepository:
 
   public func assets() -> [ImageAsset] {
     storedAssets.values.sorted { $0.url.path < $1.url.path }
+  }
+
+  public func searchAssets(matching query: String) -> [ImageAsset] {
+    AssetQuery(searchText: query)
+      .apply(to: assets(), enrichments: storedEnrichments)
   }
 
   public func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) {
@@ -88,6 +95,17 @@ public actor InMemoryAssetRepository:
 
   public func removeLibraryRoot(id: UUID) {
     storedRoots[id] = nil
+  }
+
+  public func appendProcessingHistory(_ records: [ProcessingHistoryRecord]) {
+    for record in records {
+      storedProcessingHistory[record.sourceAssetID, default: []].append(record)
+    }
+  }
+
+  public func processingHistory(for assetID: AssetID) -> [ProcessingHistoryRecord] {
+    storedProcessingHistory[assetID, default: []]
+      .sorted { $0.createdAt < $1.createdAt }
   }
 
   private func invalidateChangedEnrichments(
