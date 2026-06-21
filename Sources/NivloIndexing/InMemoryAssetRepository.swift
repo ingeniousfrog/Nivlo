@@ -30,10 +30,18 @@ public actor InMemoryAssetRepository:
     in rootURL: URL,
     with assets: [ImageAsset]
   ) -> Int {
-    let rootURL = rootURL.standardizedFileURL
+    replaceAssets(in: rootURL, under: rootURL, with: assets)
+  }
+
+  public func replaceAssets(
+    in scopeURL: URL,
+    under rootURL: URL,
+    with assets: [ImageAsset]
+  ) -> Int {
+    let scopeURL = scopeURL.standardizedFileURL
     let existingIDs = Set(
       storedAssets.values
-        .filter { $0.url.isContained(in: rootURL) }
+        .filter { $0.url.isContained(in: scopeURL) }
         .map(\.id)
     )
     let replacementIDs = Set(assets.map(\.id))

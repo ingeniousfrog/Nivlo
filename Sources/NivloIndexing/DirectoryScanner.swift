@@ -130,11 +130,29 @@ public actor DirectoryScanner: DirectoryScanning {
       throw DirectoryScannerError.invalidRoot(rootURL)
     }
 
-    let discovery = try discoverImages(in: rootURL)
+    return try await scanValidated(scopeURL: rootURL, rootURL: rootURL)
+  }
+
+  public func scan(scopeURL: URL, under rootURL: URL) async throws -> ScanSummary {
+    let scopeURL = scopeURL.standardizedFileURL
+    let rootURL = rootURL.standardizedFileURL
+    guard scopeURL.isContained(in: rootURL), try isDirectory(scopeURL) else {
+      throw DirectoryScannerError.invalidRoot(scopeURL)
+    }
+
+    return try await scanValidated(scopeURL: scopeURL, rootURL: rootURL)
+  }
+
+  private func scanValidated(
+    scopeURL: URL,
+    rootURL: URL
+  ) async throws -> ScanSummary {
+    let discovery = try discoverImages(in: scopeURL)
     let removedCount: Int
     if discovery.issueCount == 0 {
       removedCount = try await repository.replaceAssets(
-        in: rootURL,
+        in: scopeURL,
+        under: rootURL,
         with: discovery.assets
       )
     } else {
@@ -264,4 +282,13 @@ private struct DiscoveryResult {
 private struct ImageDimensions {
   let width: Int
   let height: Int
+}
+
+extension URL {
+  fileprivate func isContained(in rootURL: URL) -> Bool {
+    let candidatePath = standardizedFileURL.path
+    let rootPath = rootURL.standardizedFileURL.path
+    return candidatePath == rootPath
+      || candidatePath.hasPrefix(rootPath + "/")
+  }
 }

@@ -24,6 +24,7 @@ final class LibraryModel: ObservableObject {
   private let scanner: DirectoryScanner
   private let rootAccessManager: LibraryRootAccessManager
   private let enrichmentPipeline: ImageEnrichmentPipeline
+  private let fileEventMonitor: LibraryRootFileEventMonitor
   private let spotlightSource = SpotlightCandidateSource()
 
   init() {
@@ -32,9 +33,15 @@ final class LibraryModel: ObservableObject {
     scanner = dependencies.scanner
     rootAccessManager = dependencies.rootAccessManager
     enrichmentPipeline = dependencies.enrichmentPipeline
+    fileEventMonitor = dependencies.fileEventMonitor
     if let startupError = dependencies.startupError {
       errorMessage = startupError
       statusMessage = "Index persistence unavailable"
+    }
+    Task { [weak self] in
+      await self?.fileEventMonitor.setDidScanHandler { [weak self] in
+        await self?.refreshAfterFileEvents()
+      }
     }
   }
 
@@ -48,6 +55,7 @@ final class LibraryModel: ObservableObject {
           .map { ($0.assetID, $0) }
       )
       updateSimilarityGroups()
+      await startWatchingActiveRoots()
       if let repositoryError = restoration.repositoryError {
         errorMessage = repositoryError
         statusMessage = "Couldn’t restore folder access"
@@ -79,6 +87,7 @@ final class LibraryModel: ObservableObject {
       let summary = try await scanner.scan(rootURL: rootURL)
       roots = try await repository.libraryRoots()
       assets = try await repository.assets()
+      await startWatchingActiveRoots()
       statusMessage = scanStatus(summary)
     } catch {
       errorMessage = error.localizedDescription
@@ -117,6 +126,22 @@ final class LibraryModel: ObservableObject {
     await scanActiveRoot(rootURL)
   }
 
+  func filteredAssets(searchText: String) -> [ImageAsset] {
+    AssetQuery(searchText: searchText)
+      .apply(to: assets, enrichments: enrichments)
+  }
+
+  func smartAssets(
+    _ smartView: SmartAssetView,
+    searchText: String
+  ) -> [ImageAsset] {
+    AssetQuery(searchText: searchText)
+      .apply(
+        to: smartView.assets(in: assets),
+        enrichments: enrichments
+      )
+  }
+
   private func scanActiveRoot(_ rootURL: URL) async {
     guard !isScanning else {
       return
@@ -127,6 +152,7 @@ final class LibraryModel: ObservableObject {
     do {
       let summary = try await scanner.scan(rootURL: rootURL)
       assets = try await repository.assets()
+      await startWatchingActiveRoots()
       statusMessage = scanStatus(summary)
     } catch {
       errorMessage = error.localizedDescription
@@ -134,6 +160,31 @@ final class LibraryModel: ObservableObject {
     }
     isScanning = false
     await enrichAccessibleAssets()
+  }
+
+  private func startWatchingActiveRoots() async {
+    do {
+      try await fileEventMonitor.start(rootURLs: await rootAccessManager.activeURLs())
+    } catch {
+      errorMessage = error.localizedDescription
+      statusMessage = "Folder watching unavailable"
+    }
+  }
+
+  private func refreshAfterFileEvents() async {
+    do {
+      assets = try await repository.assets()
+      enrichments = Dictionary(
+        uniqueKeysWithValues: try await repository.enrichments()
+          .map { ($0.assetID, $0) }
+      )
+      updateSimilarityGroups()
+      statusMessage = "\(assets.count) images indexed · updated from disk"
+      await enrichAccessibleAssets()
+    } catch {
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn’t refresh changed files"
+    }
   }
 
   private func enrichAccessibleAssets() async {
@@ -207,21 +258,27 @@ final class LibraryModel: ObservableObject {
       let databaseURL = try databaseURL()
       let thumbnailCacheURL = try thumbnailCacheURL()
       let repository = try SQLiteAssetRepository(databaseURL: databaseURL)
+      let scanner = DirectoryScanner(repository: repository)
       return LibraryDependencies(
         repository: repository,
-        scanner: DirectoryScanner(repository: repository),
+        scanner: scanner,
         rootAccessManager: LibraryRootAccessManager(repository: repository),
         enrichmentPipeline: ImageEnrichmentPipeline(
           repository: repository,
           enricher: ImageEnricher(cacheDirectory: thumbnailCacheURL)
         ),
+        fileEventMonitor: LibraryRootFileEventMonitor(
+          watcher: FSEventsFileEventWatcher(),
+          scanner: scanner
+        ),
         startupError: nil
       )
     } catch {
       let repository = InMemoryAssetRepository()
+      let scanner = DirectoryScanner(repository: repository)
       return LibraryDependencies(
         repository: repository,
-        scanner: DirectoryScanner(repository: repository),
+        scanner: scanner,
         rootAccessManager: LibraryRootAccessManager(repository: repository),
         enrichmentPipeline: ImageEnrichmentPipeline(
           repository: repository,
@@ -229,6 +286,10 @@ final class LibraryModel: ObservableObject {
             cacheDirectory: FileManager.default.temporaryDirectory
               .appending(path: "Nivlo/Thumbnails", directoryHint: .isDirectory)
           )
+        ),
+        fileEventMonitor: LibraryRootFileEventMonitor(
+          watcher: FSEventsFileEventWatcher(),
+          scanner: scanner
         ),
         startupError: error.localizedDescription
       )
@@ -241,6 +302,7 @@ private struct LibraryDependencies {
   let scanner: DirectoryScanner
   let rootAccessManager: LibraryRootAccessManager
   let enrichmentPipeline: ImageEnrichmentPipeline
+  let fileEventMonitor: LibraryRootFileEventMonitor
   let startupError: String?
 }
 

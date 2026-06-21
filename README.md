@@ -17,20 +17,30 @@ Phase 1 is under active development. The current vertical slice can:
 - store basic file and pixel metadata in a persistent SQLite index;
 - generate bounded local thumbnail cache files without altering originals;
 - extract TIFF/EXIF camera metadata;
+- run best-effort Vision OCR and store OCR text when macOS can read it;
+- extract dominant color buckets for color filtering;
 - compute streaming SHA-256 and 64-bit perceptual hashes;
 - invalidate and rebuild derived metadata when source files change;
 - preserve existing index records when a scan is incomplete or loses access;
 - reconcile deleted and moved files when a directory is rescanned;
+- watch active library roots with FSEvents, coalesce bursts, and rescan only
+  affected folders when possible;
 - group exact duplicates and perceptually similar images;
 - restore indexed assets on launch;
 - browse indexed images in a native SwiftUI grid;
+- search indexed images by filename, path, OCR text, and keywords;
+- browse smart views for screenshots, recent downloads, recently modified
+  images, and large files;
+- process images into an output directory with output-only conversion,
+  compression quality, resizing, batch naming, and overwrite-safe suffixes;
 - copy paths or Markdown image references, reveal files in Finder, and drag
   file URLs out of the grid.
 
-FSEvents updates, OCR, color extraction, search, smart collections, and image
-processing remain on the Phase 1 roadmap. Spotlight results are discovery
-candidates only; Nivlo builds its complete index only after the user authorizes
-a folder.
+Remaining Phase 1 work is mostly UI polish and deeper indexing: richer filter
+controls, project/source classification, low-priority validation scheduling,
+external-volume remount recovery, and exposing batch processing through the
+SwiftUI selection flow. Spotlight results are discovery candidates only; Nivlo
+builds its complete index only after the user authorizes a folder.
 
 ## Run locally
 

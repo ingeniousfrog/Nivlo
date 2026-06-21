@@ -46,6 +46,17 @@ struct ImageEnricherTests {
     #expect(enrichment.exif.orientation == 1)
   }
 
+  @Test("extracts dominant color buckets")
+  func extractsDominantColors() async throws {
+    let fixture = try ImagingFixture()
+    let enricher = ImageEnricher(cacheDirectory: fixture.cacheURL)
+
+    let enrichment = try await enricher.enrich(fixture.asset)
+
+    #expect(!enrichment.exif.dominantColors.isEmpty)
+    #expect(enrichment.exif.dominantColors.allSatisfy { $0.hasPrefix("#") })
+  }
+
   @Test("writes a bounded thumbnail without changing the original")
   func writesThumbnailWithoutChangingOriginal() async throws {
     let fixture = try ImagingFixture(width: 1200, height: 800)

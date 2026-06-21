@@ -67,6 +67,44 @@ struct SQLiteAssetRepositoryTests {
     #expect(removedCount == 0)
     #expect(assets == [moved])
   }
+
+  @Test("scoped replacement removes only assets under scope while preserving root")
+  func scopedReplacementPreservesOwningRoot() async throws {
+    let repository = try SQLiteAssetRepository(databaseURL: temporaryDatabaseURL())
+    let rootURL = URL(filePath: "/tmp/nivlo-library")
+    let scopeURL = rootURL.appending(path: "icons")
+    let nestedOriginal = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-1"),
+      url: scopeURL.appending(path: "old.png")
+    )
+    let nestedReplacement = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-2"),
+      url: scopeURL.appending(path: "new.png")
+    )
+    let sibling = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-3"),
+      url: rootURL.appending(path: "logos/keep.png")
+    )
+    _ = try await repository.replaceAssets(
+      in: rootURL,
+      with: [nestedOriginal, sibling]
+    )
+
+    let removedCount = try await repository.replaceAssets(
+      in: scopeURL,
+      under: rootURL,
+      with: [nestedReplacement]
+    )
+    let assets = try await repository.assets()
+    let finalRemovedCount = try await repository.replaceAssets(
+      in: rootURL,
+      with: []
+    )
+
+    #expect(removedCount == 1)
+    #expect(assets == [nestedReplacement, sibling])
+    #expect(finalRemovedCount == 2)
+  }
 }
 
 private func temporaryDatabaseURL() -> URL {

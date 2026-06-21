@@ -39,6 +39,10 @@ let package = Package(
       ]
     ),
     .testTarget(
+      name: "NivloDomainTests",
+      dependencies: ["NivloDomain"]
+    ),
+    .testTarget(
       name: "NivloIndexingTests",
       dependencies: ["NivloDomain", "NivloIndexing"]
     ),

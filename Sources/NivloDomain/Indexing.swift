@@ -26,10 +26,16 @@ public protocol AssetRepository: Sendable {
   func assets() async throws -> [ImageAsset]
   func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) async throws
   func replaceAssets(in rootURL: URL, with assets: [ImageAsset]) async throws -> Int
+  func replaceAssets(
+    in scopeURL: URL,
+    under rootURL: URL,
+    with assets: [ImageAsset]
+  ) async throws -> Int
 }
 
 public protocol DirectoryScanning: Sendable {
   func scan(rootURL: URL) async throws -> ScanSummary
+  func scan(scopeURL: URL, under rootURL: URL) async throws -> ScanSummary
 }
 
 public struct LibraryRoot: Identifiable, Equatable, Sendable {

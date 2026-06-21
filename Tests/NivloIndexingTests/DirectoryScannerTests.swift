@@ -68,6 +68,43 @@ struct DirectoryScannerTests {
     #expect(assets.map(\.filename) == ["second.png"])
   }
 
+  @Test("scoped scans update only the affected directory")
+  func scopedScanUpdatesOnlyAffectedDirectory() async throws {
+    let fixture = try TemporaryDirectory()
+    let icons = fixture.url.appending(path: "icons", directoryHint: .isDirectory)
+    let logos = fixture.url.appending(path: "logos", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: icons, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: logos, withIntermediateDirectories: true)
+    let oldIcon = icons.appending(path: "old.png")
+    let newIcon = icons.appending(path: "new.png")
+    let logo = logos.appending(path: "keep.png")
+    try makeImage(at: oldIcon)
+    try makeImage(at: logo)
+    let repository = InMemoryAssetRepository()
+    let scanner = DirectoryScanner(repository: repository)
+    _ = try await scanner.scan(rootURL: fixture.url)
+    try FileManager.default.removeItem(at: oldIcon)
+    try makeImage(at: newIcon)
+
+    let summary = try await scanner.scan(scopeURL: icons, under: fixture.url)
+    let assets = await repository.assets()
+
+    #expect(summary.discoveredCount == 1)
+    #expect(summary.removedCount == 1)
+    #expect(assets.map(\.filename).sorted() == ["keep.png", "new.png"])
+  }
+
+  @Test("scoped scan rejects a scope outside the library root")
+  func scopedScanRejectsExternalScope() async throws {
+    let fixture = try TemporaryDirectory()
+    let external = try TemporaryDirectory()
+    let scanner = DirectoryScanner(repository: InMemoryAssetRepository())
+
+    await #expect(throws: DirectoryScannerError.invalidRoot(external.url)) {
+      try await scanner.scan(scopeURL: external.url, under: fixture.url)
+    }
+  }
+
   @Test("rejects a scan root that is not a directory")
   func rejectsFileRoot() async throws {
     let fixture = try TemporaryDirectory()

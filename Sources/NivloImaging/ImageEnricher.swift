@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import NivloDomain
 import UniformTypeIdentifiers
+import Vision
 
 public enum ImageEnricherError: Error, Equatable, LocalizedError, Sendable {
   case sourceChanged(URL)
@@ -27,15 +28,18 @@ public enum ImageEnricherError: Error, Equatable, LocalizedError, Sendable {
 public actor ImageEnricher: AssetImageEnriching {
   private let cacheDirectory: URL
   private let thumbnailMaxPixelSize: Int
+  private let textRecognizer: any ImageTextRecognizing
   private let now: @Sendable () -> Date
 
   public init(
     cacheDirectory: URL,
     thumbnailMaxPixelSize: Int = 512,
+    textRecognizer: any ImageTextRecognizing = VisionImageTextRecognizer(),
     now: @escaping @Sendable () -> Date = Date.init
   ) {
     self.cacheDirectory = cacheDirectory.standardizedFileURL
     self.thumbnailMaxPixelSize = max(1, thumbnailMaxPixelSize)
+    self.textRecognizer = textRecognizer
     self.now = now
   }
 
@@ -52,13 +56,20 @@ public actor ImageEnricher: AssetImageEnriching {
       exactHash: exactHash,
       sourceURL: asset.url
     )
+    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    let ocrText = await recognizeText(in: image)
+    let dominantColors = dominantColorBuckets(source: source)
     try validateSourceStillMatches(asset)
     return AssetEnrichment(
       assetID: asset.id,
       exactHash: exactHash,
       perceptualHash: perceptualHash,
       thumbnailURL: thumbnailURL,
-      exif: extractEXIF(source: source),
+      exif: extractEXIF(
+        source: source,
+        ocrText: ocrText,
+        dominantColors: dominantColors
+      ),
       indexedAt: now()
     )
   }
@@ -205,7 +216,11 @@ public actor ImageEnricher: AssetImageEnriching {
     return thumbnailURL
   }
 
-  private func extractEXIF(source: CGImageSource) -> AssetEXIF {
+  private func extractEXIF(
+    source: CGImageSource,
+    ocrText: String?,
+    dominantColors: [String]
+  ) -> AssetEXIF {
     let properties =
       CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
       as? [CFString: Any]
@@ -220,8 +235,76 @@ public actor ImageEnricher: AssetImageEnriching {
       isoSpeed: isoSpeed(exif?[kCGImagePropertyExifISOSpeedRatings]),
       focalLength: number(exif?[kCGImagePropertyExifFocalLength])?.doubleValue,
       aperture: number(exif?[kCGImagePropertyExifFNumber])?.doubleValue,
-      exposureTime: number(exif?[kCGImagePropertyExifExposureTime])?.doubleValue
+      exposureTime: number(exif?[kCGImagePropertyExifExposureTime])?.doubleValue,
+      ocrText: ocrText,
+      dominantColors: dominantColors
     )
+  }
+
+  private func recognizeText(in image: CGImage?) async -> String? {
+    guard let image else {
+      return nil
+    }
+    do {
+      return try await textRecognizer.recognizeText(in: image)
+    } catch {
+      return nil
+    }
+  }
+
+  private func dominantColorBuckets(source: CGImageSource) -> [String] {
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceThumbnailMaxPixelSize: 24,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+    ]
+    guard
+      let image = CGImageSourceCreateThumbnailAtIndex(
+        source,
+        0,
+        options as CFDictionary
+      ),
+      let context = CGContext(
+        data: nil,
+        width: 24,
+        height: 24,
+        bitsPerComponent: 8,
+        bytesPerRow: 24 * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
+    else {
+      return []
+    }
+    context.interpolationQuality = .medium
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 24, height: 24))
+    guard let data = context.data else {
+      return []
+    }
+
+    let pixels = data.bindMemory(to: UInt8.self, capacity: 24 * 24 * 4)
+    var buckets: [String: Int] = [:]
+    for index in stride(from: 0, to: 24 * 24 * 4, by: 4) {
+      let red = quantizedChannel(pixels[index])
+      let green = quantizedChannel(pixels[index + 1])
+      let blue = quantizedChannel(pixels[index + 2])
+      let hex = String(format: "#%02X%02X%02X", red, green, blue)
+      buckets[hex, default: 0] += 1
+    }
+    return
+      buckets
+      .sorted {
+        if $0.value == $1.value {
+          return $0.key < $1.key
+        }
+        return $0.value > $1.value
+      }
+      .prefix(6)
+      .map(\.key)
+  }
+
+  private func quantizedChannel(_ value: UInt8) -> UInt8 {
+    UInt8((Int(value) / 32) * 32)
   }
 
   private func capturedAt(
@@ -249,5 +332,28 @@ public actor ImageEnricher: AssetImageEnriching {
 
   private func number(_ value: Any?) -> NSNumber? {
     value as? NSNumber
+  }
+}
+
+public protocol ImageTextRecognizing: Sendable {
+  func recognizeText(in image: CGImage) async throws -> String?
+}
+
+public struct VisionImageTextRecognizer: ImageTextRecognizing {
+  public init() {}
+
+  public func recognizeText(in image: CGImage) async throws -> String? {
+    try await Task.detached(priority: .utility) {
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = .fast
+      request.usesLanguageCorrection = false
+      let handler = VNImageRequestHandler(cgImage: image)
+      try handler.perform([request])
+      let text = (request.results ?? [])
+        .compactMap { $0.topCandidates(1).first?.string }
+        .joined(separator: "\n")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return text.isEmpty ? nil : text
+    }.value
   }
 }

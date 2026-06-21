@@ -92,10 +92,19 @@ public actor SQLiteAssetRepository:
     in rootURL: URL,
     with assets: [ImageAsset]
   ) throws -> Int {
+    try replaceAssets(in: rootURL, under: rootURL, with: assets)
+  }
+
+  public func replaceAssets(
+    in scopeURL: URL,
+    under rootURL: URL,
+    with assets: [ImageAsset]
+  ) throws -> Int {
+    let scopePath = scopeURL.standardizedFileURL.path
     let rootPath = rootURL.standardizedFileURL.path
     try execute("BEGIN IMMEDIATE TRANSACTION;")
     do {
-      let existingIDs = try assetIDs(inRootPath: rootPath)
+      let existingIDs = try assetIDs(inScopePath: scopePath, rootPath: rootPath)
       let replacementIDs = Set(assets.map(\.id))
       let removedIDs = existingIDs.subtracting(replacementIDs)
       try deleteAssets(removedIDs)
@@ -319,15 +328,21 @@ public actor SQLiteAssetRepository:
     }
   }
 
-  private func assetIDs(inRootPath rootPath: String) throws -> Set<AssetID> {
+  private func assetIDs(
+    inScopePath scopePath: String,
+    rootPath: String
+  ) throws -> Set<AssetID> {
     let sql = """
       SELECT volume_id, file_id
       FROM assets
-      WHERE root_path = ?;
+      WHERE root_path = ?
+        AND (path = ? OR path LIKE ? ESCAPE char(92));
       """
     let statement = try prepare(sql)
     defer { sqlite3_finalize(statement) }
     try bind(rootPath, at: 1, to: statement, sql: sql)
+    try bind(scopePath, at: 2, to: statement, sql: sql)
+    try bind("\(escapeLikePattern(scopePath))/%", at: 3, to: statement, sql: sql)
 
     var identities: Set<AssetID> = []
     while sqlite3_step(statement) == SQLITE_ROW {
@@ -340,6 +355,13 @@ public actor SQLiteAssetRepository:
     }
     try requireFinished(statement, sql: sql)
     return identities
+  }
+
+  private func escapeLikePattern(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "%", with: "\\%")
+      .replacingOccurrences(of: "_", with: "\\_")
   }
 
   private func deleteAssets(_ identities: Set<AssetID>) throws {

@@ -10,11 +10,13 @@ struct LibraryView: View {
     case spotlight
     case duplicates
     case similar
+    case smart(SmartAssetView)
   }
 
   @StateObject private var model = LibraryModel()
   @State private var isChoosingFolder = false
   @State private var selection: SectionSelection? = .allImages
+  @State private var searchText = ""
 
   private let columns = [
     GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 16)
@@ -35,6 +37,11 @@ struct LibraryView: View {
         }
       }
     }
+    .searchable(
+      text: $searchText,
+      placement: .toolbar,
+      prompt: "Search filename, path, OCR, keywords"
+    )
     .task {
       await model.loadLibrary()
     }
@@ -86,6 +93,12 @@ struct LibraryView: View {
           .badge(model.similarGroups.count)
           .tag(SectionSelection.similar)
       }
+      Section("Smart Views") {
+        smartViewRow(.screenshots, systemImage: "camera.viewfinder")
+        smartViewRow(.recentDownloads, systemImage: "arrow.down.circle")
+        smartViewRow(.recentlyModified, systemImage: "clock.arrow.circlepath")
+        smartViewRow(.largeFiles, systemImage: "externaldrive.badge.icloud")
+      }
       Section("Status") {
         Label(
           model.statusMessage,
@@ -124,6 +137,15 @@ struct LibraryView: View {
     .navigationSplitViewColumnWidth(min: 210, ideal: 240)
   }
 
+  private func smartViewRow(
+    _ smartView: SmartAssetView,
+    systemImage: String
+  ) -> some View {
+    Label(smartView.title, systemImage: systemImage)
+      .badge(model.smartAssets(smartView, searchText: "").count)
+      .tag(SectionSelection.smart(smartView))
+  }
+
   @ViewBuilder
   private var content: some View {
     if selection == .spotlight {
@@ -143,6 +165,13 @@ struct LibraryView: View {
           "Images within the perceptual-hash similarity threshold appear here.",
         groups: model.similarGroups.map(\.assetIDs)
       )
+    } else if case .smart(let smartView) = selection {
+      assetGridContent(
+        title: smartView.title,
+        assets: model.smartAssets(smartView, searchText: searchText),
+        emptyTitle: "No \(smartView.title)",
+        emptyDescription: "Nivlo will show matching indexed images here."
+      )
     } else if model.assets.isEmpty {
       ContentUnavailableView {
         Label("Your visual library starts here", systemImage: "photo.stack")
@@ -155,9 +184,33 @@ struct LibraryView: View {
         .buttonStyle(.borderedProminent)
       }
     } else {
+      assetGridContent(
+        title: "All Images",
+        assets: model.filteredAssets(searchText: searchText),
+        emptyTitle: "No Matching Images",
+        emptyDescription: "Try a different filename, path, OCR text, or keyword."
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func assetGridContent(
+    title: String,
+    assets: [ImageAsset],
+    emptyTitle: String,
+    emptyDescription: String
+  ) -> some View {
+    if assets.isEmpty {
+      ContentUnavailableView(
+        emptyTitle,
+        systemImage: "photo.stack",
+        description: Text(emptyDescription)
+      )
+      .navigationTitle(title)
+    } else {
       ScrollView {
         LazyVGrid(columns: columns, spacing: 20) {
-          ForEach(model.assets) { asset in
+          ForEach(assets) { asset in
             AssetCard(
               asset: asset,
               enrichment: model.enrichments[asset.id]
@@ -166,7 +219,7 @@ struct LibraryView: View {
         }
         .padding(24)
       }
-      .navigationTitle("All Images")
+      .navigationTitle(title)
     }
   }
 
