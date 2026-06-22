@@ -178,6 +178,10 @@ public actor LibraryRootAccessManager {
       .sorted { $0.path < $1.path }
   }
 
+  public func activeURL(for rootID: UUID) -> URL? {
+    activeRoots[rootID]?.url
+  }
+
   public func remove(rootID: UUID) async throws {
     try await repository.removeLibraryRoot(id: rootID)
     if let active = activeRoots.removeValue(forKey: rootID),
@@ -202,12 +206,15 @@ public actor LibraryRootAccessManager {
     let startedSecurityScope = bookmarkProvider.startAccessing(url)
     do {
       let activeRoot: LibraryRoot
-      if resolved.isStale {
+      let needsPathUpdate = url.path != root.pathHint
+      if resolved.isStale || needsPathUpdate {
         activeRoot = LibraryRoot(
           id: root.id,
           displayName: url.lastPathComponent,
           pathHint: url.path,
-          bookmarkData: try bookmarkProvider.createBookmark(for: url),
+          bookmarkData: resolved.isStale
+            ? try bookmarkProvider.createBookmark(for: url)
+            : root.bookmarkData,
           addedAt: root.addedAt
         )
         try await repository.upsertLibraryRoot(activeRoot)

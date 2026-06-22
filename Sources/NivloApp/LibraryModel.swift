@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import NivloDomain
 import NivloImaging
@@ -7,25 +8,16 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class LibraryModel: ObservableObject {
-  enum SpotlightDiscoveryState: Equatable {
-    case checking
-    case ready(candidateCount: Int)
-    case unavailable(reason: String)
-  }
-
   @Published private(set) var assets: [ImageAsset] = []
   @Published private(set) var hiddenAssets: [HiddenAssetRecord] = []
   @Published private(set) var roots: [LibraryRoot] = []
-  @Published private(set) var spotlightCandidates: [SpotlightCandidate] = []
   @Published private(set) var enrichments: [AssetID: AssetEnrichment] = [:]
   @Published private(set) var duplicateGroups: [ExactDuplicateGroup] = []
   @Published private(set) var similarGroups: [SimilarAssetGroup] = []
   @Published private(set) var isScanning = false
   @Published private(set) var isEnriching = false
-  @Published private(set) var isDiscoveringSpotlight = false
   @Published private(set) var statusMessage = "Choose a folder to begin."
   @Published private(set) var enrichmentStatusMessage = "Rich index pending"
-  @Published private(set) var spotlightDiscoveryState: SpotlightDiscoveryState = .checking
   @Published private(set) var validationStatusMessage = "Validation idle"
   @Published private(set) var processingStatusMessage = "Processing idle"
   @Published private(set) var lineageByAssetID: [AssetID: AssetLineageGraph] = [:]
@@ -40,7 +32,6 @@ final class LibraryModel: ObservableObject {
   private let fileEventMonitor: LibraryRootFileEventMonitor
   private let validationScheduler: IndexValidationScheduler
   private let batchProcessor = ImageBatchProcessor()
-  private let spotlightSource = SpotlightCandidateSource()
   let toolBootstrapper = ToolBootstrapper.shared
 
   init() {
@@ -130,30 +121,24 @@ final class LibraryModel: ObservableObject {
     }
   }
 
-  func discoverSpotlightCandidates() async {
-    guard !isDiscoveringSpotlight else {
-      return
-    }
-    isDiscoveringSpotlight = true
-    spotlightDiscoveryState = .checking
-    do {
-      spotlightCandidates = try await spotlightSource.discover()
-      spotlightDiscoveryState = .ready(candidateCount: spotlightCandidates.count)
-    } catch {
-      spotlightDiscoveryState = .unavailable(reason: error.localizedDescription)
-    }
-    isDiscoveringSpotlight = false
-  }
-
   func rescan(_ root: LibraryRoot) async {
-    guard
-      let rootURL = await rootAccessManager.activeURLs()
-        .first(where: { $0.path == root.pathHint })
-    else {
+    guard let rootURL = await rootAccessManager.activeURL(for: root.id) else {
       errorMessage = "Access to \(root.displayName) is unavailable."
       return
     }
     await scanActiveRoot(rootURL)
+  }
+
+  func activeURL(for root: LibraryRoot) async -> URL? {
+    await rootAccessManager.activeURL(for: root.id)
+  }
+
+  func revealRootInFinder(_ root: LibraryRoot) async {
+    guard let url = await rootAccessManager.activeURL(for: root.id) else {
+      errorMessage = "Access to \(root.displayName) is unavailable."
+      return
+    }
+    NSWorkspace.shared.activateFileViewerSelecting([url])
   }
 
   func removeFolder(_ root: LibraryRoot) async {

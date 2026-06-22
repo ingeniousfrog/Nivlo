@@ -8,8 +8,6 @@ struct AIGenerationPanel: View {
   let language: NivloLanguage
   let onGenerated: (GenerationResult) -> Void
 
-  @AppStorage(AIConfiguration.defaultProviderKey)
-  private var selectedAdapterID = GenerationAdapterRegistry.all.first?.id ?? "openai-images"
   @State private var capability: GenerationCapability = .textToImage
   @State private var prompt = ""
   @State private var negativePrompt = ""
@@ -19,11 +17,11 @@ struct AIGenerationPanel: View {
   @State private var isGenerating = false
 
   private var selectedAdapter: (any GenerationAdapter)? {
-    GenerationAdapterRegistry.all.first { $0.id == selectedAdapterID }
+    GenerationAdapterRegistry.all.first { $0.id == AIConfiguration.providerID }
   }
 
   private var hasAPIKey: Bool {
-    guard let key = APIKeyStore.load(providerID: selectedAdapterID) else { return false }
+    guard let key = APIKeyStore.load(providerID: AIConfiguration.providerID) else { return false }
     return !key.isEmpty
   }
 

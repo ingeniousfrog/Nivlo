@@ -160,6 +160,37 @@ struct LibraryRootAccessTests {
 
     #expect(bookmarks.stoppedURLs() == [url])
   }
+
+  @Test("activeURL resolves by root id when pathHint differs from resolved path")
+  func activeURLByRootIDDespitePathMismatch() async throws {
+    let rootID = UUID()
+    let original = LibraryRoot(
+      id: rootID,
+      displayName: "photos",
+      pathHint: "/old/photos",
+      bookmarkData: Data("bookmark".utf8),
+      addedAt: .distantPast
+    )
+    let repository = InMemoryLibraryRootRepository(roots: [original])
+    let bookmarks = BookmarkProviderStub(
+      resolutions: [
+        original.bookmarkData: ResolvedBookmark(
+          url: URL(filePath: "/new/photos"),
+          isStale: false
+        )
+      ]
+    )
+    let manager = LibraryRootAccessManager(
+      repository: repository,
+      bookmarkProvider: bookmarks
+    )
+
+    let result = await manager.restore()
+
+    #expect(result.restoredRoots.map(\.url) == [URL(filePath: "/new/photos")])
+    #expect(await manager.activeURL(for: rootID) == URL(filePath: "/new/photos"))
+    #expect(await repository.libraryRoots().first?.pathHint == "/new/photos")
+  }
 }
 
 private actor InMemoryLibraryRootRepository: LibraryRootRepository {

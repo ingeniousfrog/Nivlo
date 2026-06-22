@@ -89,41 +89,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var similar: String { text("Similar", "相似图片") }
   var size: String { text("Size", "大小") }
   var smartViews: String { text("Smart Views", "智能视图") }
-  var explore: String { text("Explore", "探索") }
-  var exploreTitle: String { text("Explore local images", "探索本地图片") }
-  var exploreDescription: String {
-    text(
-      "Nivlo uses the image index already maintained by macOS to quickly suggest local folders. Nothing is uploaded, and folders are indexed only after you choose to add them.",
-      "Nivlo 会利用 macOS 已维护的图片索引，快速发现本机可能包含素材的文件夹。图片不会上传，只有你主动添加的文件夹才会进入 Nivlo 索引。"
-    )
-  }
-  var exploreSuggestedImages: String { text("Suggested local images", "建议的本地图片") }
-  var exploreSuggestionDescription: String {
-    text(
-      "Choose an image to add its containing folder to Nivlo.",
-      "选择一张图片，将它所在的文件夹添加到 Nivlo。"
-    )
-  }
-  var addFolderDirectly: String { text("Add Folder Directly", "直接添加文件夹") }
-  var addContainingFolder: String { text("Add Containing Folder", "添加所在文件夹") }
-  var findingLocalImages: String {
-    text("Finding images already indexed by macOS…", "正在查找 macOS 已索引的图片…")
-  }
-  var noExploreSuggestions: String { text("No suggestions yet", "暂无探索建议") }
-  var noExploreSuggestionsDescription: String {
-    text(
-      "macOS did not return any indexed images. You can still add folders directly.",
-      "macOS 暂未返回已索引图片，你仍然可以直接添加文件夹。"
-    )
-  }
-  var exploreUnavailable: String { text("Explore unavailable", "探索暂不可用") }
-  var exploreUnavailableDescription: String {
-    text(
-      "Spotlight could not start. Check that Spotlight indexing is enabled, then try again. Installing Nivlo is not required.",
-      "Spotlight 查询无法启动。请确认系统已开启 Spotlight 索引后重试；无需先安装 Nivlo。"
-    )
-  }
-  var discovering: String { text("Discovering…", "正在探索…") }
   var status: String { text("Status", "状态") }
   var validateIndex: String { text("Validate Index", "校验索引") }
   var copyPath: String { text("Copy path", "复制路径") }
@@ -220,8 +185,11 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
       "此素材的导出、编辑和 AI 生成记录会显示在这里。"
     )
   }
-  var aiProvider: String { text("Provider", "提供方") }
   var aiAPIKey: String { text("API key", "API 密钥") }
+  var aiGetAPIKeyHint: String {
+    text("Get your API key at", "请前往以下地址获取 API Key")
+  }
+  var aiGetAPIKeyLink: String { text("synclip.ai/dev", "synclip.ai/dev") }
   var aiCapability: String { text("Capability", "能力") }
   var aiPrompt: String { text("Prompt", "提示词") }
   var aiNegativePrompt: String { text("Negative prompt", "反向提示词") }
@@ -276,7 +244,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var appearanceSystem: String { text("Match System", "跟随系统") }
   var aiSettingsTitle: String { text("AI Generation", "AI 生成") }
   var aiConfigureInSettings: String {
-    text("Configure your provider and API key in Settings (⌘,).", "请在设置（⌘,）中配置提供方与 API Key。")
+    text("Configure your API key in Settings (⌘,).", "请在设置（⌘,）中填写 API Key。")
   }
   var aiMissingAPIKeyHint: String {
     text("API key missing. Open Settings to add one.", "缺少 API Key，请打开设置进行配置。")
@@ -339,26 +307,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
     }
   }
 
-  func spotlightStatus(_ state: LibraryModel.SpotlightDiscoveryState) -> String {
-    switch state {
-    case .checking:
-      discovering
-    case .ready(let candidateCount):
-      candidateCount == 0
-        ? text("No suggestions", "暂无建议")
-        : text("\(candidateCount) suggestions", "\(candidateCount) 条建议")
-    case .unavailable(let reason):
-      text("Explore unavailable: \(reason)", "探索暂不可用")
-    }
-  }
-
-  func exploreFailureDescription(_ reason: String) -> String {
-    text(
-      "\(exploreUnavailableDescription)\n\nSystem detail: \(reason)",
-      exploreUnavailableDescription
-    )
-  }
-
   func noSmartViewTitle(_ smartView: SmartAssetView) -> String {
     text("No \(smartView.title)", "没有\(smartViewTitle(smartView))")
   }
@@ -401,7 +349,6 @@ struct LibraryView: View {
 
   private enum SectionSelection: Hashable {
     case allImages
-    case spotlight
     case duplicates
     case similar
     case hidden
@@ -545,9 +492,6 @@ struct LibraryView: View {
     .task {
       await model.loadLibrary()
     }
-    .task {
-      await model.discoverSpotlightCandidates()
-    }
     .task(id: refreshIntervalRawValue) {
       await runAutomaticRefreshLoop()
     }
@@ -637,9 +581,6 @@ struct LibraryView: View {
         Label(language.allImages, systemImage: "photo.on.rectangle.angled")
           .badge(model.assets.count)
           .tag(SectionSelection.allImages)
-        Label(language.explore, systemImage: "sparkle.magnifyingglass")
-          .badge(model.spotlightCandidates.count)
-          .tag(SectionSelection.spotlight)
         Label(language.duplicates, systemImage: "square.on.square")
           .badge(model.duplicateGroups.count)
           .tag(SectionSelection.duplicates)
@@ -674,6 +615,11 @@ struct LibraryView: View {
                   await model.rescan(root)
                 }
               },
+              onRevealInFinder: {
+                Task {
+                  await model.revealRootInFinder(root)
+                }
+              },
               onRemove: {
                 folderPendingRemoval = root
               }
@@ -687,12 +633,6 @@ struct LibraryView: View {
           systemImage: model.isScanning
             ? "arrow.triangle.2.circlepath"
             : "checkmark.circle"
-        )
-        Label(
-          language.spotlightStatus(model.spotlightDiscoveryState),
-          systemImage: model.isDiscoveringSpotlight
-            ? "magnifyingglass"
-            : "bolt.horizontal.circle"
         )
         Label(
           model.enrichmentStatusMessage,
@@ -727,9 +667,7 @@ struct LibraryView: View {
 
   @ViewBuilder
   private var content: some View {
-    if selection == .spotlight {
-      spotlightContent
-    } else if selection == .duplicates {
+    if selection == .duplicates {
       groupedContent(
         title: "Exact Duplicates",
         emptyTitle: "No Exact Duplicates",
@@ -1022,154 +960,12 @@ struct LibraryView: View {
       .navigationTitle(title)
     }
   }
-
-  @ViewBuilder
-  private var spotlightContent: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        SpotlightExplainerCard(
-          isDiscovering: model.isDiscoveringSpotlight,
-          state: model.spotlightDiscoveryState,
-          language: language,
-          onAddFolder: chooseFolderToIndex
-        )
-
-        if !model.spotlightCandidates.isEmpty {
-          VStack(alignment: .leading, spacing: 8) {
-            Text(language.exploreSuggestedImages)
-              .font(.headline)
-            Text(language.exploreSuggestionDescription)
-              .font(.callout)
-              .foregroundStyle(.secondary)
-          }
-
-          LazyVGrid(columns: columns, spacing: 20) {
-            ForEach(model.spotlightCandidates) { candidate in
-              SpotlightCandidateCard(candidate: candidate, language: language) {
-                Task {
-                  await model.addFolder(candidate.url.deletingLastPathComponent())
-                  await MainActor.run {
-                    selection = .allImages
-                  }
-                }
-              }
-            }
-          }
-        } else if model.isDiscoveringSpotlight {
-          ProgressView(language.findingLocalImages)
-            .frame(maxWidth: .infinity, minHeight: 160)
-        } else if case .unavailable(let reason) = model.spotlightDiscoveryState {
-          ContentUnavailableView(
-            language.exploreUnavailable,
-            systemImage: "exclamationmark.magnifyingglass",
-            description: Text(language.exploreFailureDescription(reason))
-          )
-        } else {
-          ContentUnavailableView(
-            language.noExploreSuggestions,
-            systemImage: "sparkle.magnifyingglass",
-            description: Text(language.noExploreSuggestionsDescription)
-          )
-        }
-      }
-      .padding(24)
-    }
-    .navigationTitle(language.explore)
-  }
-}
-
-private struct SpotlightExplainerCard: View {
-  let isDiscovering: Bool
-  let state: LibraryModel.SpotlightDiscoveryState
-  let language: NivloLanguage
-  let onAddFolder: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack(alignment: .top, spacing: 12) {
-        Image(systemName: "sparkle.magnifyingglass")
-          .font(.system(size: 28, weight: .semibold))
-          .foregroundStyle(.tint)
-          .frame(width: 38)
-
-        VStack(alignment: .leading, spacing: 8) {
-          Text(language.exploreTitle)
-            .font(.title3.weight(.semibold))
-          Text(language.exploreDescription)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-        }
-      }
-
-      HStack(spacing: 10) {
-        Label(
-          isDiscovering ? language.discovering : language.spotlightStatus(state),
-          systemImage: isDiscovering ? "hourglass" : "info.circle"
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-        Spacer()
-
-        Button(language.addFolderDirectly) {
-          onAddFolder()
-        }
-        .buttonStyle(.borderedProminent)
-      }
-    }
-    .padding(18)
-    .background(cardSurfaceBackground(cornerRadius: 18))
-  }
-}
-
-private struct SpotlightCandidateCard: View {
-  let candidate: SpotlightCandidate
-  let language: NivloLanguage
-  let onAddFolder: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      ZStack {
-        RoundedRectangle(cornerRadius: 12)
-          .fill(Color(nsColor: .controlBackgroundColor))
-          .aspectRatio(4 / 3, contentMode: .fit)
-        Image(systemName: "photo")
-          .font(.system(size: 34))
-          .foregroundStyle(.primary.opacity(0.35))
-      }
-      Text(candidate.displayName)
-        .font(.headline)
-        .lineLimit(1)
-      Text(candidate.url.deletingLastPathComponent().path)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      if let width = candidate.pixelWidth, let height = candidate.pixelHeight {
-        Text("\(width) × \(height)")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      Button(language.addContainingFolder) {
-        onAddFolder()
-      }
-      .buttonStyle(.bordered)
-    }
-    .padding(10)
-    .background(cardSurfaceBackground(cornerRadius: 16))
-    .contextMenu {
-      Button(language.showInFinder) {
-        NSWorkspace.shared.activateFileViewerSelecting([candidate.url])
-      }
-      Button(language.copyPath) {
-        AssetClipboard.copyPath(candidate.url)
-      }
-    }
-  }
 }
 
 private struct FolderSidebarRow: View {
   let root: LibraryRoot
   let onRescan: () -> Void
+  let onRevealInFinder: () -> Void
   let onRemove: () -> Void
 
   var body: some View {
@@ -1187,7 +983,7 @@ private struct FolderSidebarRow: View {
           onRescan()
         }
         Button("Show in Finder") {
-          NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: root.pathHint)])
+          onRevealInFinder()
         }
         Divider()
         Button("Remove from Nivlo", role: .destructive) {
@@ -1210,7 +1006,7 @@ private struct FolderSidebarRow: View {
         onRescan()
       }
       Button("Show in Finder") {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: root.pathHint)])
+        onRevealInFinder()
       }
       Button("Remove from Nivlo", role: .destructive) {
         onRemove()

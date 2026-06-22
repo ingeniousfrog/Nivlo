@@ -3,11 +3,11 @@ import SwiftUI
 
 enum AIConfiguration {
   static let defaultProviderKey = "nivlo.ai.defaultProvider"
+  static let providerID = "openai-images"
+  static let apiKeyURL = URL(string: "https://synclip.ai/dev")!
 }
 
 struct AISettingsView: View {
-  @AppStorage(AIConfiguration.defaultProviderKey)
-  private var selectedAdapterID = GenerationAdapterRegistry.all.first?.id ?? "openai-images"
   @State private var apiKey = ""
   @State private var statusMessage: String?
   @AppStorage("nivlo.library.refreshInterval")
@@ -38,10 +38,10 @@ struct AISettingsView: View {
       }
 
       Section(language.aiSettingsTitle) {
-        Picker(language.aiProvider, selection: $selectedAdapterID) {
-          ForEach(GenerationAdapterRegistry.all, id: \.id) { adapter in
-            Text(adapter.displayName).tag(adapter.id)
-          }
+        LabeledContent {
+          Link(language.aiGetAPIKeyLink, destination: AIConfiguration.apiKeyURL)
+        } label: {
+          Text(language.aiGetAPIKeyHint)
         }
         SecureField(language.aiAPIKey, text: $apiKey)
         HStack {
@@ -64,11 +64,7 @@ struct AISettingsView: View {
     .padding(20)
     .frame(width: 460)
     .onAppear {
-      apiKey = APIKeyStore.load(providerID: selectedAdapterID) ?? ""
-    }
-    .onChange(of: selectedAdapterID) { _, newValue in
-      apiKey = APIKeyStore.load(providerID: newValue) ?? ""
-      statusMessage = nil
+      apiKey = APIKeyStore.load(providerID: AIConfiguration.providerID) ?? ""
     }
   }
 
@@ -90,7 +86,7 @@ struct AISettingsView: View {
   private func saveAPIKey() {
     do {
       try APIKeyStore.save(
-        providerID: selectedAdapterID,
+        providerID: AIConfiguration.providerID,
         apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
       )
       statusMessage = language.apiKeySaved
