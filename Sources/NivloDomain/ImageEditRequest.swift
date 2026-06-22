@@ -65,16 +65,29 @@ public enum ImageAnnotationKind: String, Codable, Sendable, Equatable {
   case arrow
 }
 
+public struct MaskBrushPoint: Equatable, Sendable, Codable {
+  public var x: Double
+  public var y: Double
+
+  public init(x: Double, y: Double) {
+    self.x = x
+    self.y = y
+  }
+}
+
 public struct MaskStroke: Identifiable, Equatable, Sendable, Codable {
   public let id: UUID
-  public var normalizedRect: NormalizedCropRect
+  public var points: [MaskBrushPoint]
+  public var brushRadius: Double
 
   public init(
     id: UUID = UUID(),
-    normalizedRect: NormalizedCropRect
+    points: [MaskBrushPoint] = [],
+    brushRadius: Double = 0.03
   ) {
     self.id = id
-    self.normalizedRect = normalizedRect
+    self.points = points
+    self.brushRadius = brushRadius
   }
 }
 
@@ -120,6 +133,34 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
     self.kind = kind
     self.text = text
     self.normalizedRect = normalizedRect
+  }
+}
+
+public struct ImageEditSnapshot: Sendable, Equatable {
+  public var cropRect: NormalizedCropRect
+  public var quarterTurns: Int
+  public var flippedHorizontally: Bool
+  public var adjustments: ImageAdjustmentSettings
+  public var annotations: [ImageAnnotation]
+  public var maskStrokes: [MaskStroke]
+  public var layers: [EditorLayer]
+
+  public init(
+    cropRect: NormalizedCropRect = .full,
+    quarterTurns: Int = 0,
+    flippedHorizontally: Bool = false,
+    adjustments: ImageAdjustmentSettings = .neutral,
+    annotations: [ImageAnnotation] = [],
+    maskStrokes: [MaskStroke] = [],
+    layers: [EditorLayer] = EditorLayer.defaults
+  ) {
+    self.cropRect = cropRect
+    self.quarterTurns = quarterTurns
+    self.flippedHorizontally = flippedHorizontally
+    self.adjustments = adjustments
+    self.annotations = annotations
+    self.maskStrokes = maskStrokes
+    self.layers = layers
   }
 }
 

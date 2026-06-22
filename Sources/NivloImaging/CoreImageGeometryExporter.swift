@@ -219,14 +219,39 @@ public struct CoreImageGeometryExporter: Sendable {
     NSColor.black.setFill()
     NSBezierPath(rect: CGRect(origin: .zero, size: extent.size)).fill()
     NSColor.white.setFill()
-    for stroke in strokes {
-      let pixel = stroke.normalizedRect.pixelRect(
-        imageWidth: Int(extent.width),
-        imageHeight: Int(extent.height)
-      )
-      NSBezierPath(
-        ovalIn: CGRect(x: pixel.x, y: pixel.y, width: pixel.width, height: pixel.height)
-      ).fill()
+    let minDimension = min(extent.width, extent.height)
+    for stroke in strokes where !stroke.points.isEmpty {
+      let radius = max(4, CGFloat(stroke.brushRadius) * minDimension)
+      let path = NSBezierPath()
+      path.lineWidth = radius * 2
+      path.lineCapStyle = .round
+      path.lineJoinStyle = .round
+      for (index, point) in stroke.points.enumerated() {
+        let pixel = CGPoint(
+          x: CGFloat(point.x) * extent.width,
+          y: CGFloat(1 - point.y) * extent.height
+        )
+        if index == 0 {
+          path.move(to: pixel)
+        } else {
+          path.line(to: pixel)
+        }
+      }
+      if stroke.points.count == 1, let point = stroke.points.first {
+        let pixelX = CGFloat(point.x) * extent.width
+        let pixelY = CGFloat(1 - point.y) * extent.height
+        NSBezierPath(
+          ovalIn: CGRect(
+            x: pixelX - radius,
+            y: pixelY - radius,
+            width: radius * 2,
+            height: radius * 2
+          )
+        ).fill()
+      } else {
+        NSColor.white.setStroke()
+        path.stroke()
+      }
     }
     guard
       let maskCGImage = maskImage.cgImage(forProposedRect: nil, context: nil, hints: nil),

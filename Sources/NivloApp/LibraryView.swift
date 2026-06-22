@@ -211,8 +211,36 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
     text("Edits are previewed live. Export writes a new file without changing the original.", "编辑会实时预览。导出会写入新文件，不会修改原图。")
   }
   var editorGeometryHint: String {
-    text("Drag the yellow frame to crop. Rotation and flip apply on export.", "拖动黄色框进行裁切。旋转与翻转会体现在导出结果中。")
+    text(
+      "Drag handles or edges to crop. Use Apply to commit, Preview to check the result.",
+      "拖动手柄或边缘进行裁切。Apply 提交，Preview 预览效果。"
+    )
   }
+  var editorAdjustHint: String {
+    text(
+      "Tune sliders, then Preview or Apply. Revert restores the last applied values.",
+      "调节滑块后可 Preview 或 Apply。Revert 恢复上次已提交的值。"
+    )
+  }
+  var maskBrushHint: String {
+    text(
+      "Paint on the image to keep areas. Unpainted regions become transparent on export.",
+      "在图像上涂抹要保留的区域；未涂抹部分导出时变为透明。"
+    )
+  }
+  var maskBrushSize: String { text("Brush size", "画笔大小") }
+  var applyChanges: String { text("Apply", "应用") }
+  var previewChanges: String { text("Preview", "预览") }
+  var revertChanges: String { text("Revert", "还原") }
+  var changesApplied: String { text("Changes applied", "更改已应用") }
+  var previewActive: String { text("Previewing", "预览中") }
+  var previewActiveHint: String {
+    text("Showing rendered preview. Exit preview to keep editing.", "正在显示渲染预览。退出预览后可继续编辑。")
+  }
+  var exitPreview: String { text("Exit preview", "退出预览") }
+  var renderingPreview: String { text("Rendering preview…", "正在生成预览…") }
+  var previewFailed: String { text("Preview failed", "预览失败") }
+  var cropSizeLabel: String { text("Crop size", "裁切区域") }
   var exportingImage: String { text("Exporting image…", "正在导出图片…") }
   var exportAudioOnly: String { text("Export Audio", "导出音频") }
   var exportingAudio: String { text("Exporting audio…", "正在导出音频…") }
