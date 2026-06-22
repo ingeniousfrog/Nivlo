@@ -17,6 +17,7 @@ struct LibraryView: View {
   @State private var selection: SectionSelection? = .allImages
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
+  @State private var previewAsset: ImageAsset?
   @State private var folderFilter: String?
   @State private var sourceFilter: AssetSource?
   @State private var formatFilter: FormatFilter = .all
@@ -121,6 +122,19 @@ struct LibraryView: View {
     } message: {
       Text(model.errorMessage ?? "Unknown error")
     }
+    .sheet(item: $previewAsset) { asset in
+      AssetPreviewPanel(
+        asset: asset,
+        enrichment: model.enrichments[asset.id],
+        isSelected: selectedAssetIDs.contains(asset.id),
+        onToggleSelection: {
+          toggleSelection(asset.id)
+        },
+        onExport: {
+          chooseExportFolder(assetIDs: [asset.id])
+        }
+      )
+    }
   }
 
   private var sidebar: some View {
@@ -129,7 +143,7 @@ struct LibraryView: View {
         Label("All Images", systemImage: "photo.on.rectangle.angled")
           .badge(model.assets.count)
           .tag(SectionSelection.allImages)
-        Label("Spotlight Candidates", systemImage: "sparkle.magnifyingglass")
+        Label("Mac Spotlight Discovery", systemImage: "sparkle.magnifyingglass")
           .badge(model.spotlightCandidates.count)
           .tag(SectionSelection.spotlight)
         Label("Duplicates", systemImage: "square.on.square")
@@ -295,7 +309,7 @@ struct LibraryView: View {
               isSelected: selectedAssetIDs.contains(asset.id)
             )
             .onTapGesture {
-              toggleSelection(asset.id)
+              previewAsset = asset
             }
           }
         }
@@ -328,6 +342,10 @@ struct LibraryView: View {
   }
 
   private func chooseExportFolder() {
+    chooseExportFolder(assetIDs: selectedAssetIDs)
+  }
+
+  private func chooseExportFolder(assetIDs: Set<AssetID>) {
     guard
       let url = chooseDirectory(
         title: "Export Selected Images",
@@ -337,8 +355,8 @@ struct LibraryView: View {
       return
     }
     Task {
-      await model.exportAssets(assetIDs: selectedAssetIDs, to: url)
-      selectedAssetIDs = []
+      await model.exportAssets(assetIDs: assetIDs, to: url)
+      selectedAssetIDs.subtract(assetIDs)
     }
   }
 
@@ -382,8 +400,12 @@ struct LibraryView: View {
                 ) { asset in
                   AssetCard(
                     asset: asset,
-                    enrichment: model.enrichments[asset.id]
+                    enrichment: model.enrichments[asset.id],
+                    isSelected: selectedAssetIDs.contains(asset.id)
                   )
+                  .onTapGesture {
+                    previewAsset = asset
+                  }
                 }
               }
             }
@@ -401,35 +423,43 @@ struct LibraryView: View {
       ProgressView("Finding images already indexed by macOS…")
     } else if model.spotlightCandidates.isEmpty {
       ContentUnavailableView(
-        "No Spotlight Candidates",
+        "No Mac Spotlight Discoveries",
         systemImage: "sparkle.magnifyingglass",
         description: Text(
-          "Add a folder to scan it directly. Spotlight is only a quick discovery source."
+          "Spotlight is a quick first-pass discovery source for images macOS already knows about. Add folders directly when Spotlight is unavailable or incomplete."
         )
       )
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           Text(
-            "These are lightweight suggestions from macOS metadata. Add their folders to build Nivlo’s complete local index."
+            "These are lightweight suggestions from macOS Spotlight across the local computer. Add a candidate’s folder to build Nivlo’s complete local index without moving or uploading originals."
           )
           .font(.callout)
           .foregroundStyle(.secondary)
           LazyVGrid(columns: columns, spacing: 20) {
             ForEach(model.spotlightCandidates) { candidate in
-              SpotlightCandidateCard(candidate: candidate)
+              SpotlightCandidateCard(candidate: candidate) {
+                Task {
+                  await model.addFolder(candidate.url.deletingLastPathComponent())
+                  await MainActor.run {
+                    selection = .allImages
+                  }
+                }
+              }
             }
           }
         }
         .padding(24)
       }
-      .navigationTitle("Spotlight Candidates")
+      .navigationTitle("Mac Spotlight Discovery")
     }
   }
 }
 
 private struct SpotlightCandidateCard: View {
   let candidate: SpotlightCandidate
+  let onAddFolder: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -453,6 +483,10 @@ private struct SpotlightCandidateCard: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Button("Add Containing Folder") {
+        onAddFolder()
+      }
+      .buttonStyle(.bordered)
     }
     .padding(10)
     .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
@@ -461,8 +495,7 @@ private struct SpotlightCandidateCard: View {
         NSWorkspace.shared.activateFileViewerSelecting([candidate.url])
       }
       Button("Copy Path") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(candidate.url.path, forType: .string)
+        AssetClipboard.copyPath(candidate.url)
       }
     }
   }
@@ -512,38 +545,150 @@ private struct AssetCard: View {
         NSWorkspace.shared.activateFileViewerSelecting([asset.url])
       }
       Button("Copy Path") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(asset.url.path, forType: .string)
+        AssetClipboard.copyPath(asset.url)
       }
       Button("Copy Markdown Image") {
-        let altText = asset.filename
-          .replacingOccurrences(of: "[", with: "\\[")
-          .replacingOccurrences(of: "]", with: "\\]")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(
-          "![\(altText)](<\(asset.url.path.replacingOccurrences(of: ">", with: "%3E"))>)",
-          forType: .string
-        )
+        AssetClipboard.copyMarkdownImage(asset)
       }
     }
   }
 
   @ViewBuilder
   private var thumbnail: some View {
-    if let thumbnailURL = enrichment?.thumbnailURL,
-      let image = NSImage(contentsOf: thumbnailURL)
-    {
-      Image(nsImage: image)
-        .resizable()
-        .scaledToFill()
-    } else {
-      ZStack {
-        Color.secondary.opacity(0.12)
-        Image(systemName: "photo")
-          .font(.largeTitle)
-          .foregroundStyle(.secondary)
+    AssetImageView(
+      asset: asset,
+      enrichment: enrichment,
+      maxPixelSize: 420
+    )
+  }
+}
+
+private struct AssetPreviewPanel: View {
+  let asset: ImageAsset
+  let enrichment: AssetEnrichment?
+  let isSelected: Bool
+  let onToggleSelection: () -> Void
+  let onExport: () -> Void
+
+  @Environment(\.dismiss) private var dismiss
+
+  private var details: AssetPreviewDetails {
+    AssetPreviewDetails(asset: asset)
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(details.title)
+            .font(.title2.weight(.semibold))
+            .lineLimit(1)
+          Text(details.path)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        Spacer()
+        Button("Close") {
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+      }
+      .padding(20)
+
+      Divider()
+
+      HStack(spacing: 0) {
+        ZStack {
+          Color.black.opacity(0.06)
+          AssetImageView(
+            asset: asset,
+            enrichment: enrichment,
+            maxPixelSize: 1400,
+            contentMode: .fit
+          )
+          .padding(24)
+        }
+        .frame(minWidth: 520, minHeight: 420)
+
+        Divider()
+
+        VStack(alignment: .leading, spacing: 18) {
+          Text("Details")
+            .font(.headline)
+          detailRow("Format", details.format)
+          detailRow("Dimensions", details.dimensions)
+          detailRow("Size", details.fileSize)
+          detailRow("Path", details.path)
+
+          Spacer()
+
+          VStack(alignment: .leading, spacing: 10) {
+            Button {
+              NSWorkspace.shared.activateFileViewerSelecting([asset.url])
+            } label: {
+              Label("Show in Finder", systemImage: "finder")
+            }
+            Button {
+              AssetClipboard.copyPath(asset.url)
+            } label: {
+              Label("Copy Path", systemImage: "doc.on.doc")
+            }
+            Button {
+              AssetClipboard.copyMarkdownImage(asset)
+            } label: {
+              Label("Copy Markdown Image", systemImage: "text.badge.plus")
+            }
+            Button {
+              onExport()
+            } label: {
+              Label("Export Image…", systemImage: "square.and.arrow.up")
+            }
+            Button {
+              onToggleSelection()
+            } label: {
+              Label(
+                isSelected ? "Remove from Export Selection" : "Select for Export",
+                systemImage: isSelected ? "checkmark.circle.fill" : "circle"
+              )
+            }
+          }
+          .buttonStyle(.bordered)
+        }
+        .padding(20)
+        .frame(width: 300)
       }
     }
+    .frame(minWidth: 860, minHeight: 560)
+  }
+
+  private func detailRow(_ label: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(label)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.callout)
+        .textSelection(.enabled)
+        .lineLimit(label == "Path" ? 3 : 1)
+    }
+  }
+}
+
+private enum AssetClipboard {
+  static func copyPath(_ url: URL) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(url.standardizedFileURL.path, forType: .string)
+  }
+
+  static func copyMarkdownImage(_ asset: ImageAsset) {
+    let altText = asset.filename
+      .replacingOccurrences(of: "[", with: "\\[")
+      .replacingOccurrences(of: "]", with: "\\]")
+    let path = asset.url.standardizedFileURL.path
+      .replacingOccurrences(of: ">", with: "%3E")
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("![\(altText)](<\(path)>)", forType: .string)
   }
 }
 
