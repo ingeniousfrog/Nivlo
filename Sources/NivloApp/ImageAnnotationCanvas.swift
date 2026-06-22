@@ -56,12 +56,17 @@ private struct AnnotationObjectView: View {
 
   @State private var activeHandle: NormalizedCropHandle?
   @State private var dragStartRect = NormalizedCropRect.full
+  @State private var dragStartArrowStart = NormalizedPoint(x: 0, y: 1)
+  @State private var dragStartArrowEnd = NormalizedPoint(x: 1, y: 0)
 
   var body: some View {
     let rect = pixelRect(annotation.normalizedRect.clamped())
     ZStack {
       annotationContent
         .frame(width: rect.width, height: rect.height)
+        .rotationEffect(
+          .degrees(annotation.kind == .arrow ? 0 : annotation.rotationDegrees)
+        )
         .position(x: rect.midX, y: rect.midY)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -70,9 +75,14 @@ private struct AnnotationObjectView: View {
         .gesture(dragGesture(for: .move))
 
       if isSelected {
-        selectionBorder(rect: rect)
-        ForEach(cornerHandles(in: rect), id: \.handle) { item in
-          resizeHandle(item)
+        if annotation.kind == .arrow {
+          arrowSelection
+        } else {
+          selectionBorder(rect: rect)
+          ForEach(cornerHandles(in: rect), id: \.handle) { item in
+            resizeHandle(item)
+          }
+          rotationHandle(rect: rect)
         }
       }
     }
@@ -102,16 +112,19 @@ private struct AnnotationObjectView: View {
             )
         }
     case .arrow:
-      ArrowShape(direction: annotation.arrowStyle.direction)
-        .stroke(
-          Color(annotation.arrowStyle.color),
-          style: StrokeStyle(
-            lineWidth: annotation.arrowStyle.lineWidth,
-            lineCap: .round,
-            lineJoin: .round
-          )
+      ArrowShape(
+        direction: annotation.arrowStyle.direction,
+        start: localArrowPoint(annotation.arrowStart),
+        end: localArrowPoint(annotation.arrowEnd)
+      )
+      .stroke(
+        Color(annotation.arrowStyle.color),
+        style: StrokeStyle(
+          lineWidth: annotation.arrowStyle.lineWidth,
+          lineCap: .round,
+          lineJoin: .round
         )
-        .padding(max(8, annotation.arrowStyle.lineWidth))
+      )
     }
   }
 
@@ -133,8 +146,83 @@ private struct AnnotationObjectView: View {
     Rectangle()
       .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
       .frame(width: rect.width, height: rect.height)
+      .rotationEffect(.degrees(annotation.rotationDegrees))
       .position(x: rect.midX, y: rect.midY)
       .allowsHitTesting(false)
+  }
+
+  private var arrowSelection: some View {
+    let start = pixelPoint(annotation.arrowStart)
+    let end = pixelPoint(annotation.arrowEnd)
+    return ZStack {
+      ArrowLineShape(start: start, end: end)
+        .stroke(Color.accentColor.opacity(0.75), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        .allowsHitTesting(false)
+      endpointHandle(point: start, isStart: true)
+      endpointHandle(point: end, isStart: false)
+    }
+  }
+
+  private func endpointHandle(point: CGPoint, isStart: Bool) -> some View {
+    Circle()
+      .fill(isStart ? Color.white : Color.accentColor)
+      .overlay {
+        Circle().stroke(Color.accentColor, lineWidth: 2)
+      }
+      .frame(width: 16, height: 16)
+      .frame(width: 32, height: 32)
+      .position(point)
+      .highPriorityGesture(endpointDragGesture(isStart: isStart))
+      .accessibilityLabel(isStart ? "Move arrow start" : "Move arrow end")
+  }
+
+  private func endpointDragGesture(isStart: Bool) -> some Gesture {
+    DragGesture(minimumDistance: 0)
+      .onChanged { value in
+        onSelect()
+        let point = normalizedPoint(value.location)
+        if isStart {
+          annotation.arrowStart = point
+        } else {
+          annotation.arrowEnd = point
+        }
+        annotation.normalizedRect = ArrowGeometry.bounds(
+          start: annotation.arrowStart,
+          end: annotation.arrowEnd
+        )
+      }
+  }
+
+  private func rotationHandle(rect: CGRect) -> some View {
+    let center = CGPoint(x: rect.midX, y: rect.midY)
+    let radians = CGFloat(annotation.rotationDegrees * .pi / 180)
+    let distance = max(rect.height / 2 + 34, 46)
+    let point = CGPoint(
+      x: center.x + sin(radians) * distance,
+      y: center.y - cos(radians) * distance
+    )
+    return ZStack {
+      Circle()
+        .fill(Color.white)
+        .overlay { Circle().stroke(Color.accentColor, lineWidth: 2) }
+        .frame(width: 15, height: 15)
+      Image(systemName: "arrow.clockwise")
+        .font(.system(size: 7, weight: .bold))
+        .foregroundStyle(Color.accentColor)
+    }
+    .frame(width: 32, height: 32)
+    .position(point)
+    .highPriorityGesture(
+      DragGesture(minimumDistance: 0)
+        .onChanged { value in
+          onSelect()
+          annotation.rotationDegrees = AnnotationGeometry.rotationDegrees(
+            center: center,
+            handle: value.location
+          )
+        }
+    )
+    .accessibilityLabel("Rotate annotation")
   }
 
   private func resizeHandle(
@@ -161,11 +249,29 @@ private struct AnnotationObjectView: View {
         if activeHandle == nil {
           activeHandle = handle
           dragStartRect = annotation.normalizedRect.clamped()
+          dragStartArrowStart = annotation.arrowStart
+          dragStartArrowEnd = annotation.arrowEnd
         }
         guard activeHandle == handle else { return }
+        if annotation.kind == .arrow, handle == .move {
+          let moved = ArrowGeometry.moving(
+            start: dragStartArrowStart,
+            end: dragStartArrowEnd,
+            translation: value.translation,
+            canvasSize: canvasSize
+          )
+          annotation.arrowStart = moved.start
+          annotation.arrowEnd = moved.end
+          annotation.normalizedRect = ArrowGeometry.bounds(start: moved.start, end: moved.end)
+          return
+        }
+        let translation = AnnotationGeometry.localTranslation(
+          value.translation,
+          rotationDegrees: annotation.rotationDegrees
+        )
         annotation.normalizedRect = dragStartRect.applying(
           handle: handle,
-          translation: value.translation,
+          translation: translation,
           canvasSize: canvasSize,
           minimumSize: 0.04
         )
@@ -173,6 +279,26 @@ private struct AnnotationObjectView: View {
       .onEnded { _ in
         activeHandle = nil
       }
+  }
+
+  private func pixelPoint(_ point: NormalizedPoint) -> CGPoint {
+    CGPoint(x: point.x * canvasSize.width, y: point.y * canvasSize.height)
+  }
+
+  private func localArrowPoint(_ point: NormalizedPoint) -> CGPoint {
+    let rect = pixelRect(annotation.normalizedRect.clamped())
+    let pixel = pixelPoint(point)
+    return CGPoint(x: pixel.x - rect.minX, y: pixel.y - rect.minY)
+  }
+
+  private func normalizedPoint(_ point: CGPoint) -> NormalizedPoint {
+    guard canvasSize.width > 0, canvasSize.height > 0 else {
+      return NormalizedPoint(x: 0, y: 0)
+    }
+    return NormalizedPoint(
+      x: Double(point.x / canvasSize.width),
+      y: Double(point.y / canvasSize.height)
+    )
   }
 
   private func pixelRect(_ rect: NormalizedCropRect) -> CGRect {
@@ -187,12 +313,23 @@ private struct AnnotationObjectView: View {
   private func cornerHandles(
     in rect: CGRect
   ) -> [(handle: NormalizedCropHandle, point: CGPoint)] {
-    [
+    let center = CGPoint(x: rect.midX, y: rect.midY)
+    let handles: [(handle: NormalizedCropHandle, point: CGPoint)] = [
       (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
       (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
       (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY)),
       (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
     ]
+    return handles.map { item in
+      (
+        item.handle,
+        AnnotationGeometry.rotating(
+          point: item.point,
+          around: center,
+          degrees: annotation.rotationDegrees
+        )
+      )
+    }
   }
 
   private func strokeStyle(
@@ -214,11 +351,23 @@ private struct AnnotationObjectView: View {
 
 struct ArrowShape: Shape {
   let direction: ArrowDirection
+  var start: CGPoint?
+  var end: CGPoint?
+
+  init(
+    direction: ArrowDirection,
+    start: CGPoint? = nil,
+    end: CGPoint? = nil
+  ) {
+    self.direction = direction
+    self.start = start
+    self.end = end
+  }
 
   func path(in rect: CGRect) -> Path {
     var path = Path()
-    let start = CGPoint(x: rect.minX, y: rect.maxY)
-    let end = CGPoint(x: rect.maxX, y: rect.minY)
+    let start = start ?? CGPoint(x: rect.minX, y: rect.maxY)
+    let end = end ?? CGPoint(x: rect.maxX, y: rect.minY)
     path.move(to: start)
     path.addLine(to: end)
     if direction == .forward || direction == .both {
@@ -242,6 +391,18 @@ struct ArrowShape: Shape {
         )
       )
     }
+  }
+}
+
+private struct ArrowLineShape: Shape {
+  let start: CGPoint
+  let end: CGPoint
+
+  func path(in _: CGRect) -> Path {
+    var path = Path()
+    path.move(to: start)
+    path.addLine(to: end)
+    return path
   }
 }
 

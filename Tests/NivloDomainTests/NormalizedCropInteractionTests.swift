@@ -62,4 +62,31 @@ struct NormalizedCropInteractionTests {
 
     #expect(moved == crop)
   }
+
+  @Test("hit testing resolves all eight resize handles and the center move handle")
+  func resolvesNineInteractionTargets() {
+    let crop = NormalizedCropRect(x: 0.2, y: 0.2, width: 0.6, height: 0.6)
+    let canvas = CGSize(width: 200, height: 100)
+    let targets: [(CGPoint, NormalizedCropHandle)] = [
+      (CGPoint(x: 40, y: 20), .topLeft),
+      (CGPoint(x: 100, y: 20), .top),
+      (CGPoint(x: 160, y: 20), .topRight),
+      (CGPoint(x: 160, y: 50), .right),
+      (CGPoint(x: 160, y: 80), .bottomRight),
+      (CGPoint(x: 100, y: 80), .bottom),
+      (CGPoint(x: 40, y: 80), .bottomLeft),
+      (CGPoint(x: 40, y: 50), .left),
+      (CGPoint(x: 100, y: 50), .move),
+    ]
+
+    for (point, expected) in targets {
+      #expect(
+        CropInteractionTarget.resolve(
+          location: point,
+          cropRect: crop,
+          canvasSize: canvas
+        ) == expected
+      )
+    }
+  }
 }

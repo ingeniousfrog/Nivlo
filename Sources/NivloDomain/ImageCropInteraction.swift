@@ -12,6 +12,51 @@ public enum NormalizedCropHandle: Sendable, Hashable {
   case left
 }
 
+public enum CropInteractionTarget {
+  public static func resolve(
+    location: CGPoint,
+    cropRect: NormalizedCropRect,
+    canvasSize: CGSize,
+    hitRadius: CGFloat = 24
+  ) -> NormalizedCropHandle? {
+    guard canvasSize.width > 0, canvasSize.height > 0 else {
+      return nil
+    }
+    let crop = cropRect.clamped()
+    let rect = CGRect(
+      x: crop.x * canvasSize.width,
+      y: crop.y * canvasSize.height,
+      width: crop.width * canvasSize.width,
+      height: crop.height * canvasSize.height
+    )
+    let targets: [(NormalizedCropHandle, CGPoint)] = [
+      (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
+      (.top, CGPoint(x: rect.midX, y: rect.minY)),
+      (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
+      (.right, CGPoint(x: rect.maxX, y: rect.midY)),
+      (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY)),
+      (.bottom, CGPoint(x: rect.midX, y: rect.maxY)),
+      (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
+      (.left, CGPoint(x: rect.minX, y: rect.midY)),
+      (.move, CGPoint(x: rect.midX, y: rect.midY)),
+    ]
+    if let nearest =
+      targets
+      .map({ target in
+        (
+          handle: target.0,
+          distance: hypot(location.x - target.1.x, location.y - target.1.y)
+        )
+      })
+      .filter({ $0.distance <= hitRadius })
+      .min(by: { $0.distance < $1.distance })
+    {
+      return nearest.handle
+    }
+    return rect.contains(location) ? .move : nil
+  }
+}
+
 extension NormalizedCropRect {
   public func applying(
     handle: NormalizedCropHandle,

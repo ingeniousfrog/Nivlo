@@ -78,6 +78,64 @@ struct CoreImageGeometryExporterTests {
     #expect(paintedAlpha > 0.9)
     #expect(erasedAlpha < 0.1, "Erased pixel alpha was \(erasedAlpha)")
   }
+
+  @Test("annotations remain visible above a restrictive mask")
+  func annotationsRenderAboveMask() throws {
+    let fixture = try GeometryExportFixture(width: 100, height: 100)
+    let outputURL = fixture.rootURL.appending(path: "annotation-above-mask.png")
+    let exporter = CoreImageGeometryExporter()
+
+    try exporter.exportPNG(
+      sourceURL: fixture.imageURL,
+      outputURL: outputURL,
+      annotations: [
+        ImageAnnotation(
+          kind: .rectangle,
+          normalizedRect: NormalizedCropRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8),
+          rectangleStyle: RectangleAnnotationStyle(
+            strokeColor: .red,
+            lineWidth: 8
+          )
+        )
+      ],
+      maskStrokes: [
+        MaskStroke(
+          points: [MaskBrushPoint(x: 0.5, y: 0.5)],
+          brushRadius: 0.08
+        )
+      ]
+    )
+
+    let redBounds = try matchingPixelBounds(in: outputURL) { pixel in
+      pixel.red > 0.7 && pixel.green < 0.45 && pixel.alpha > 0.7
+    }
+    #expect(redBounds != nil)
+  }
+
+  @Test("rotated rectangles render away from their unrotated corner")
+  func rotatedRectangle() throws {
+    let fixture = try GeometryExportFixture(width: 120, height: 120)
+    let outputURL = fixture.rootURL.appending(path: "rotated-rectangle.png")
+    let exporter = CoreImageGeometryExporter()
+
+    try exporter.exportPNG(
+      sourceURL: fixture.imageURL,
+      outputURL: outputURL,
+      annotations: [
+        ImageAnnotation(
+          kind: .rectangle,
+          normalizedRect: NormalizedCropRect(x: 0.25, y: 0.4, width: 0.5, height: 0.2),
+          rectangleStyle: RectangleAnnotationStyle(strokeColor: .red, lineWidth: 8),
+          rotationDegrees: 90
+        )
+      ]
+    )
+
+    let redBounds = try matchingPixelBounds(in: outputURL) { pixel in
+      pixel.red > 0.7 && pixel.green < 0.45 && pixel.alpha > 0.7
+    }
+    #expect(redBounds?.height ?? 0 > redBounds?.width ?? 0)
+  }
 }
 
 private struct GeometryExportFixture {
@@ -147,6 +205,13 @@ private func imageDimensions(at url: URL) throws -> (width: Int, height: Int) {
 }
 
 private func pixelAlpha(at point: CGPoint, in url: URL) throws -> Double {
+  try pixelRGBA(at: point, in: url).alpha
+}
+
+private func pixelRGBA(
+  at point: CGPoint,
+  in url: URL
+) throws -> (red: Double, green: Double, blue: Double, alpha: Double) {
   guard
     let source = CGImageSourceCreateWithURL(url as CFURL, nil),
     let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -170,7 +235,69 @@ private func pixelAlpha(at point: CGPoint, in url: URL) throws -> Double {
   context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
   let x = min(max(Int(point.x), 0), image.width - 1)
   let y = min(max(Int(point.y), 0), image.height - 1)
-  return Double(pixels[(y * image.width + x) * 4 + 3]) / 255
+  let offset = (y * image.width + x) * 4
+  return (
+    Double(pixels[offset]) / 255,
+    Double(pixels[offset + 1]) / 255,
+    Double(pixels[offset + 2]) / 255,
+    Double(pixels[offset + 3]) / 255
+  )
+}
+
+private func matchingPixelBounds(
+  in url: URL,
+  predicate: ((red: Double, green: Double, blue: Double, alpha: Double)) -> Bool
+) throws -> CGRect? {
+  guard
+    let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+  else {
+    throw GeometryExportFixtureError.creationFailed
+  }
+  var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+  guard
+    let context = CGContext(
+      data: &pixels,
+      width: image.width,
+      height: image.height,
+      bitsPerComponent: 8,
+      bytesPerRow: image.width * 4,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+  else {
+    throw GeometryExportFixtureError.creationFailed
+  }
+  context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+  var minimumX = image.width
+  var minimumY = image.height
+  var maximumX = -1
+  var maximumY = -1
+  for y in 0..<image.height {
+    for x in 0..<image.width {
+      let offset = (y * image.width + x) * 4
+      let pixel = (
+        Double(pixels[offset]) / 255,
+        Double(pixels[offset + 1]) / 255,
+        Double(pixels[offset + 2]) / 255,
+        Double(pixels[offset + 3]) / 255
+      )
+      guard predicate(pixel) else { continue }
+      minimumX = min(minimumX, x)
+      minimumY = min(minimumY, y)
+      maximumX = max(maximumX, x)
+      maximumY = max(maximumY, y)
+    }
+  }
+  guard maximumX >= minimumX, maximumY >= minimumY else {
+    return nil
+  }
+  return CGRect(
+    x: minimumX,
+    y: minimumY,
+    width: maximumX - minimumX + 1,
+    height: maximumY - minimumY + 1
+  )
 }
 
 private enum GeometryExportFixtureError: Error {

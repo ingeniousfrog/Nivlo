@@ -40,13 +40,33 @@ struct InteractiveCropOverlay: View {
       ZStack {
         cropShade(canvasSize: canvasSize, cropRect: rect)
         moveSurface(rect: rect, canvasSize: canvasSize)
+        moveHandle(rect: rect)
 
         ForEach(handlePositions(in: rect, canvasSize: canvasSize), id: \.handle) { item in
-          cropHandle(item, canvasSize: canvasSize)
+          cropHandle(item)
         }
+        Color.clear
+          .contentShape(Rectangle())
+          .gesture(unifiedDragGesture(canvasSize: canvasSize))
+          .zIndex(3)
       }
-      .contentShape(Rectangle())
     }
+  }
+
+  private func moveHandle(rect: CGRect) -> some View {
+    ZStack {
+      Circle()
+        .fill(Color.accentColor.opacity(0.9))
+        .frame(width: 20, height: 20)
+      Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+        .font(.system(size: 9, weight: .bold))
+        .foregroundStyle(.white)
+    }
+    .frame(width: 34, height: 34)
+    .position(x: rect.midX, y: rect.midY)
+    .contentShape(Rectangle())
+    .zIndex(2)
+    .accessibilityLabel(accessibilityLabel(for: .move))
   }
 
   private func cropShade(canvasSize: CGSize, cropRect: CGRect) -> some View {
@@ -65,13 +85,11 @@ struct InteractiveCropOverlay: View {
       .frame(width: rect.width, height: rect.height)
       .position(x: rect.midX, y: rect.midY)
       .contentShape(Rectangle())
-      .gesture(dragGesture(for: .move, canvasSize: canvasSize))
       .zIndex(0)
   }
 
   private func cropHandle(
-    _ item: (handle: NormalizedCropHandle, point: CGPoint),
-    canvasSize: CGSize
+    _ item: (handle: NormalizedCropHandle, point: CGPoint)
   ) -> some View {
     ZStack {
       Color.clear
@@ -86,24 +104,24 @@ struct InteractiveCropOverlay: View {
     .frame(width: 30, height: 30)
     .position(item.point)
     .contentShape(Rectangle())
-    .highPriorityGesture(dragGesture(for: item.handle, canvasSize: canvasSize))
     .zIndex(1)
     .accessibilityLabel(accessibilityLabel(for: item.handle))
   }
 
-  private func dragGesture(
-    for handle: NormalizedCropHandle,
-    canvasSize: CGSize
-  ) -> some Gesture {
+  private func unifiedDragGesture(canvasSize: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 0)
       .onChanged { value in
         if activeHandle == nil {
-          activeHandle = handle
+          activeHandle = CropInteractionTarget.resolve(
+            location: value.startLocation,
+            cropRect: cropRect,
+            canvasSize: canvasSize
+          )
           dragStartRect = cropRect.clamped()
         }
-        guard activeHandle == handle else { return }
+        guard let activeHandle else { return }
         cropRect = dragStartRect.applying(
-          handle: handle,
+          handle: activeHandle,
           translation: value.translation,
           canvasSize: canvasSize
         )

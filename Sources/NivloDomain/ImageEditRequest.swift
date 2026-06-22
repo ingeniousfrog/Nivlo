@@ -85,6 +85,90 @@ public enum ImageAnnotationKind: String, Codable, Sendable, Equatable {
   case arrow
 }
 
+public struct NormalizedPoint: Equatable, Sendable, Codable {
+  public var x: Double
+  public var y: Double
+
+  public init(x: Double, y: Double) {
+    self.x = min(max(x, 0), 1)
+    self.y = min(max(y, 0), 1)
+  }
+}
+
+public enum ArrowGeometry {
+  public static func moving(
+    start: NormalizedPoint,
+    end: NormalizedPoint,
+    translation: CGSize,
+    canvasSize: CGSize
+  ) -> (start: NormalizedPoint, end: NormalizedPoint) {
+    guard canvasSize.width > 0, canvasSize.height > 0 else {
+      return (start, end)
+    }
+    let dx = Double(translation.width / canvasSize.width)
+    let dy = Double(translation.height / canvasSize.height)
+    let minimumX = min(start.x, end.x)
+    let maximumX = max(start.x, end.x)
+    let minimumY = min(start.y, end.y)
+    let maximumY = max(start.y, end.y)
+    let clampedDX = min(max(dx, -minimumX), 1 - maximumX)
+    let clampedDY = min(max(dy, -minimumY), 1 - maximumY)
+    return (
+      NormalizedPoint(x: start.x + clampedDX, y: start.y + clampedDY),
+      NormalizedPoint(x: end.x + clampedDX, y: end.y + clampedDY)
+    )
+  }
+
+  public static func bounds(
+    start: NormalizedPoint,
+    end: NormalizedPoint,
+    padding: Double = 0.02
+  ) -> NormalizedCropRect {
+    let left = max(0, min(start.x, end.x) - padding)
+    let top = max(0, min(start.y, end.y) - padding)
+    let right = min(1, max(start.x, end.x) + padding)
+    let bottom = min(1, max(start.y, end.y) + padding)
+    return NormalizedCropRect(
+      x: left,
+      y: top,
+      width: max(0.01, right - left),
+      height: max(0.01, bottom - top)
+    )
+  }
+}
+
+public enum AnnotationGeometry {
+  public static func rotationDegrees(center: CGPoint, handle: CGPoint) -> Double {
+    let radians = atan2(handle.y - center.y, handle.x - center.x) + .pi / 2
+    return Double(radians * 180 / .pi)
+  }
+
+  public static func localTranslation(
+    _ translation: CGSize,
+    rotationDegrees: Double
+  ) -> CGSize {
+    let radians = CGFloat(rotationDegrees * .pi / 180)
+    return CGSize(
+      width: translation.width * cos(radians) + translation.height * sin(radians),
+      height: -translation.width * sin(radians) + translation.height * cos(radians)
+    )
+  }
+
+  public static func rotating(
+    point: CGPoint,
+    around center: CGPoint,
+    degrees: Double
+  ) -> CGPoint {
+    let radians = CGFloat(degrees * .pi / 180)
+    let dx = point.x - center.x
+    let dy = point.y - center.y
+    return CGPoint(
+      x: center.x + dx * cos(radians) - dy * sin(radians),
+      y: center.y + dx * sin(radians) + dy * cos(radians)
+    )
+  }
+}
+
 public struct RGBAColor: Equatable, Sendable, Codable {
   public var red: Double
   public var green: Double
@@ -244,6 +328,22 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
   public var textStyle: TextAnnotationStyle
   public var rectangleStyle: RectangleAnnotationStyle
   public var arrowStyle: ArrowAnnotationStyle
+  public var rotationDegrees: Double
+  public var arrowStart: NormalizedPoint
+  public var arrowEnd: NormalizedPoint
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case kind
+    case text
+    case normalizedRect
+    case textStyle
+    case rectangleStyle
+    case arrowStyle
+    case rotationDegrees
+    case arrowStart
+    case arrowEnd
+  }
 
   public init(
     id: UUID = UUID(),
@@ -252,7 +352,10 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
     normalizedRect: NormalizedCropRect,
     textStyle: TextAnnotationStyle = TextAnnotationStyle(),
     rectangleStyle: RectangleAnnotationStyle = RectangleAnnotationStyle(),
-    arrowStyle: ArrowAnnotationStyle = ArrowAnnotationStyle()
+    arrowStyle: ArrowAnnotationStyle = ArrowAnnotationStyle(),
+    rotationDegrees: Double = 0,
+    arrowStart: NormalizedPoint? = nil,
+    arrowEnd: NormalizedPoint? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -261,6 +364,37 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
     self.textStyle = textStyle
     self.rectangleStyle = rectangleStyle
     self.arrowStyle = arrowStyle
+    self.rotationDegrees = rotationDegrees
+    self.arrowStart =
+      arrowStart
+      ?? NormalizedPoint(
+        x: normalizedRect.x,
+        y: normalizedRect.y + normalizedRect.height
+      )
+    self.arrowEnd =
+      arrowEnd
+      ?? NormalizedPoint(
+        x: normalizedRect.x + normalizedRect.width,
+        y: normalizedRect.y
+      )
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let normalizedRect = try container.decode(NormalizedCropRect.self, forKey: .normalizedRect)
+
+    self.init(
+      id: try container.decode(UUID.self, forKey: .id),
+      kind: try container.decode(ImageAnnotationKind.self, forKey: .kind),
+      text: try container.decode(String.self, forKey: .text),
+      normalizedRect: normalizedRect,
+      textStyle: try container.decode(TextAnnotationStyle.self, forKey: .textStyle),
+      rectangleStyle: try container.decode(RectangleAnnotationStyle.self, forKey: .rectangleStyle),
+      arrowStyle: try container.decode(ArrowAnnotationStyle.self, forKey: .arrowStyle),
+      rotationDegrees: try container.decodeIfPresent(Double.self, forKey: .rotationDegrees) ?? 0,
+      arrowStart: try container.decodeIfPresent(NormalizedPoint.self, forKey: .arrowStart),
+      arrowEnd: try container.decodeIfPresent(NormalizedPoint.self, forKey: .arrowEnd)
+    )
   }
 }
 

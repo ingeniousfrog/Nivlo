@@ -85,6 +85,18 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
     )
 
+    image = applyAdjustments(
+      adjustments,
+      to: image,
+      enabled: layers.first(where: { $0.kind == .adjustments })?.isVisible != false
+    )
+    if layers.first(where: { $0.kind == .mask })?.isVisible != false, !maskStrokes.isEmpty {
+      image = applyMask(maskStrokes, to: image)
+    }
+    if layers.first(where: { $0.kind == .annotations })?.isVisible != false {
+      image = rasterizeAnnotations(annotations, over: image)
+    }
+
     if !cropRect.isEffectivelyFull {
       let cropCGRect = cropRect.ciCropCGRect(
         imageWidth: extent.width,
@@ -97,17 +109,6 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
         )
         extent = image.extent.integral
       }
-    }
-    image = applyAdjustments(
-      adjustments,
-      to: image,
-      enabled: layers.first(where: { $0.kind == .adjustments })?.isVisible != false
-    )
-    if layers.first(where: { $0.kind == .annotations })?.isVisible != false {
-      image = rasterizeAnnotations(annotations, over: image)
-    }
-    if layers.first(where: { $0.kind == .mask })?.isVisible != false, !maskStrokes.isEmpty {
-      image = applyMask(maskStrokes, to: image)
     }
 
     let outputExtent = image.extent.integral
@@ -186,14 +187,26 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       guard !annotations.isEmpty else {
         return image
       }
-      let extent = image.extent
-      let renderer = NSImage(size: extent.size)
-      renderer.lockFocus()
-      defer { renderer.unlockFocus() }
-
-      let context = NSGraphicsContext.current?.cgContext
-      if let cgImage = CIContext().createCGImage(image, from: extent) {
-        context?.draw(cgImage, in: CGRect(origin: .zero, size: extent.size))
+      let extent = image.extent.integral
+      guard
+        let baseImage = CIContext().createCGImage(image, from: extent),
+        let context = CGContext(
+          data: nil,
+          width: Int(extent.width),
+          height: Int(extent.height),
+          bitsPerComponent: 8,
+          bytesPerRow: Int(extent.width) * 4,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+      else {
+        return image
+      }
+      context.draw(baseImage, in: CGRect(origin: .zero, size: extent.size))
+      NSGraphicsContext.saveGraphicsState()
+      NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+      defer {
+        NSGraphicsContext.restoreGraphicsState()
       }
 
       for annotation in annotations {
@@ -207,21 +220,29 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
           width: CGFloat(pixel.width),
           height: CGFloat(pixel.height)
         )
+        context.saveGState()
+        if annotation.kind != .arrow, annotation.rotationDegrees != 0 {
+          context.translateBy(x: rect.midX, y: rect.midY)
+          context.rotate(by: CGFloat(-annotation.rotationDegrees * .pi / 180))
+          context.translateBy(x: -rect.midX, y: -rect.midY)
+        }
         switch annotation.kind {
         case .rectangle:
-          context?.setFillColor(nsColor(annotation.rectangleStyle.fillColor).cgColor)
-          context?.fill(rect)
-          context?.setStrokeColor(nsColor(annotation.rectangleStyle.strokeColor).cgColor)
-          context?.setLineWidth(annotation.rectangleStyle.lineWidth)
-          context?.setLineDash(
+          context.setFillColor(nsColor(annotation.rectangleStyle.fillColor).cgColor)
+          context.fill(rect)
+          context.setStrokeColor(nsColor(annotation.rectangleStyle.strokeColor).cgColor)
+          context.setLineWidth(annotation.rectangleStyle.lineWidth)
+          context.setLineDash(
             phase: 0,
             lengths: dashPattern(annotation.rectangleStyle.lineStyle)
           )
-          context?.stroke(rect)
-          context?.setLineDash(phase: 0, lengths: [])
+          context.stroke(rect)
+          context.setLineDash(phase: 0, lengths: [])
         case .arrow:
           drawArrow(
-            in: rect,
+            start: annotation.arrowStart,
+            end: annotation.arrowEnd,
+            extent: extent,
             style: annotation.arrowStyle,
             context: context
           )
@@ -248,11 +269,10 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
             attributes: attributes
           )
         }
+        context.restoreGState()
       }
 
-      guard
-        let annotated = renderer.cgImage(forProposedRect: nil, context: nil, hints: nil)
-      else {
+      guard let annotated = context.makeImage() else {
         return image
       }
       return CIImage(cgImage: annotated)
@@ -352,13 +372,21 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
     }
 
     private func drawArrow(
-      in rect: CGRect,
+      start: NormalizedPoint,
+      end: NormalizedPoint,
+      extent: CGRect,
       style: ArrowAnnotationStyle,
       context: CGContext?
     ) {
       guard let context else { return }
-      let start = CGPoint(x: rect.minX, y: rect.minY)
-      let end = CGPoint(x: rect.maxX, y: rect.maxY)
+      let start = CGPoint(
+        x: start.x * extent.width,
+        y: (1 - start.y) * extent.height
+      )
+      let end = CGPoint(
+        x: end.x * extent.width,
+        y: (1 - end.y) * extent.height
+      )
       context.setStrokeColor(nsColor(style.color).cgColor)
       context.setLineWidth(style.lineWidth)
       context.setLineCap(.round)
