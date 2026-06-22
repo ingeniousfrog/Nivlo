@@ -18,6 +18,7 @@ struct LibraryView: View {
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
   @State private var previewAsset: ImageAsset?
+  @State private var folderPendingRemoval: LibraryRoot?
   @State private var folderFilter: String?
   @State private var sourceFilter: AssetSource?
   @State private var formatFilter: FormatFilter = .all
@@ -135,6 +136,29 @@ struct LibraryView: View {
         }
       )
     }
+    .alert(
+      "Remove folder from Nivlo?",
+      isPresented: Binding(
+        get: { folderPendingRemoval != nil },
+        set: { isPresented in
+          if !isPresented {
+            folderPendingRemoval = nil
+          }
+        }
+      ),
+      presenting: folderPendingRemoval
+    ) { root in
+      Button("Remove", role: .destructive) {
+        removeFolder(root)
+      }
+      Button("Cancel", role: .cancel) {
+        folderPendingRemoval = nil
+      }
+    } message: { root in
+      Text(
+        "Nivlo will remove \(root.displayName) from the local index and stop watching it. Original files stay untouched in Finder."
+      )
+    }
   }
 
   private var sidebar: some View {
@@ -198,14 +222,17 @@ struct LibraryView: View {
           }
           .buttonStyle(.plain)
           ForEach(model.roots) { root in
-            Button {
-              Task {
-                await model.rescan(root)
+            FolderSidebarRow(
+              root: root,
+              onRescan: {
+                Task {
+                  await model.rescan(root)
+                }
+              },
+              onRemove: {
+                folderPendingRemoval = root
               }
-            } label: {
-              Label(root.displayName, systemImage: "folder")
-            }
-            .buttonStyle(.plain)
+            )
           }
         }
       }
@@ -341,6 +368,24 @@ struct LibraryView: View {
     }
   }
 
+  private func removeFolder(_ root: LibraryRoot) {
+    if folderFilter == root.pathHint {
+      folderFilter = nil
+    }
+    selectedAssetIDs = selectedAssetIDs.filter { assetID in
+      model.assets.contains { asset in
+        asset.id == assetID && !asset.url.isContained(in: URL(filePath: root.pathHint))
+      }
+    }
+    if previewAsset?.url.isContained(in: URL(filePath: root.pathHint)) == true {
+      previewAsset = nil
+    }
+    folderPendingRemoval = nil
+    Task {
+      await model.removeFolder(root)
+    }
+  }
+
   private func chooseExportFolder() {
     chooseExportFolder(assetIDs: selectedAssetIDs)
   }
@@ -419,24 +464,25 @@ struct LibraryView: View {
 
   @ViewBuilder
   private var spotlightContent: some View {
-    if model.isDiscoveringSpotlight && model.spotlightCandidates.isEmpty {
-      ProgressView("Finding images already indexed by macOS…")
-    } else if model.spotlightCandidates.isEmpty {
-      ContentUnavailableView(
-        "No Mac Spotlight Discoveries",
-        systemImage: "sparkle.magnifyingglass",
-        description: Text(
-          "Spotlight is a quick first-pass discovery source for images macOS already knows about. Add folders directly when Spotlight is unavailable or incomplete."
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        SpotlightExplainerCard(
+          isDiscovering: model.isDiscoveringSpotlight,
+          statusMessage: model.spotlightStatusMessage,
+          onAddFolder: chooseFolderToIndex
         )
-      )
-    } else {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          Text(
-            "These are lightweight suggestions from macOS Spotlight across the local computer. Add a candidate’s folder to build Nivlo’s complete local index without moving or uploading originals."
-          )
-          .font(.callout)
-          .foregroundStyle(.secondary)
+
+        if !model.spotlightCandidates.isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Suggested local images")
+              .font(.headline)
+            Text(
+              "Pick a suggestion to add its containing folder to Nivlo’s own index."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          }
+
           LazyVGrid(columns: columns, spacing: 20) {
             ForEach(model.spotlightCandidates) { candidate in
               SpotlightCandidateCard(candidate: candidate) {
@@ -449,11 +495,67 @@ struct LibraryView: View {
               }
             }
           }
+        } else if model.isDiscoveringSpotlight {
+          ProgressView("Finding images already indexed by macOS…")
+            .frame(maxWidth: .infinity, minHeight: 160)
+        } else {
+          ContentUnavailableView(
+            "No Spotlight suggestions yet",
+            systemImage: "sparkle.magnifyingglass",
+            description: Text(
+              "This only means macOS did not return candidates to Nivlo. Direct folder indexing still works."
+            )
+          )
         }
-        .padding(24)
       }
-      .navigationTitle("Mac Spotlight Discovery")
+      .padding(24)
     }
+    .navigationTitle("Mac Spotlight Discovery")
+  }
+}
+
+private struct SpotlightExplainerCard: View {
+  let isDiscovering: Bool
+  let statusMessage: String
+  let onAddFolder: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .top, spacing: 12) {
+        Image(systemName: "sparkle.magnifyingglass")
+          .font(.system(size: 28, weight: .semibold))
+          .foregroundStyle(.tint)
+          .frame(width: 38)
+
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Spotlight is only a discovery shortcut")
+            .font(.title3.weight(.semibold))
+          Text(
+            "Nivlo asks macOS Spotlight for images the system already knows about, then lets you add the containing folders to Nivlo’s own local index. Spotlight is not the source of truth and it is not limited to folders you already added."
+          )
+          .font(.callout)
+          .foregroundStyle(.secondary)
+        }
+      }
+
+      HStack(spacing: 10) {
+        Label(
+          isDiscovering ? "Discovering…" : statusMessage,
+          systemImage: isDiscovering ? "hourglass" : "info.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        Spacer()
+
+        Button("Add Folder Directly") {
+          onAddFolder()
+        }
+        .buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(18)
+    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
   }
 }
 
@@ -501,6 +603,54 @@ private struct SpotlightCandidateCard: View {
   }
 }
 
+private struct FolderSidebarRow: View {
+  let root: LibraryRoot
+  let onRescan: () -> Void
+  let onRemove: () -> Void
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Button(action: onRescan) {
+        Label(root.displayName, systemImage: "folder")
+          .lineLimit(1)
+      }
+      .buttonStyle(.plain)
+
+      Spacer(minLength: 4)
+
+      Menu {
+        Button("Rescan Folder") {
+          onRescan()
+        }
+        Button("Show in Finder") {
+          NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: root.pathHint)])
+        }
+        Divider()
+        Button("Remove from Nivlo", role: .destructive) {
+          onRemove()
+        }
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .imageScale(.small)
+          .foregroundStyle(.secondary)
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
+    }
+    .contextMenu {
+      Button("Rescan Folder") {
+        onRescan()
+      }
+      Button("Show in Finder") {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: root.pathHint)])
+      }
+      Button("Remove from Nivlo", role: .destructive) {
+        onRemove()
+      }
+    }
+  }
+}
+
 private struct AssetCard: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
@@ -512,6 +662,7 @@ private struct AssetCard: View {
         thumbnail
           .aspectRatio(4 / 3, contentMode: .fit)
           .clipShape(RoundedRectangle(cornerRadius: 12))
+          .contentShape(RoundedRectangle(cornerRadius: 12))
         if isSelected {
           Image(systemName: "checkmark.circle.fill")
             .font(.title2)
@@ -523,22 +674,30 @@ private struct AssetCard: View {
       Text(asset.filename)
         .font(.headline)
         .lineLimit(1)
-      HStack {
+        .truncationMode(.middle)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      HStack(spacing: 8) {
         Text(asset.contentType.components(separatedBy: ".").last?.uppercased() ?? "IMAGE")
+          .lineLimit(1)
         Spacer()
         if let width = asset.pixelWidth, let height = asset.pixelHeight {
           Text("\(width) × \(height)")
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
         }
       }
       .font(.caption)
       .foregroundStyle(.secondary)
+      .frame(maxWidth: .infinity)
     }
     .padding(10)
+    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
     .overlay {
       RoundedRectangle(cornerRadius: 16)
         .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
     }
+    .contentShape(RoundedRectangle(cornerRadius: 16))
     .draggable(asset.url)
     .contextMenu {
       Button("Show in Finder") {
@@ -578,7 +737,7 @@ private struct AssetPreviewPanel: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack {
+      HStack(spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
           Text(details.title)
             .font(.title2.weight(.semibold))
@@ -589,32 +748,45 @@ private struct AssetPreviewPanel: View {
             .lineLimit(1)
         }
         Spacer()
-        Button("Close") {
+
+        AssetPreviewToolbar(
+          asset: asset,
+          isSelected: isSelected,
+          onToggleSelection: onToggleSelection,
+          onExport: onExport
+        )
+
+        Button {
           dismiss()
+        } label: {
+          Image(systemName: "xmark")
         }
+        .buttonStyle(.bordered)
         .keyboardShortcut(.cancelAction)
+        .help("Close")
       }
-      .padding(20)
+      .padding(.horizontal, 18)
+      .padding(.vertical, 14)
 
       Divider()
 
       HStack(spacing: 0) {
         ZStack {
-          Color.black.opacity(0.06)
+          Color(nsColor: .windowBackgroundColor)
           AssetImageView(
             asset: asset,
             enrichment: enrichment,
             maxPixelSize: 1400,
             contentMode: .fit
           )
-          .padding(24)
+          .padding(18)
         }
-        .frame(minWidth: 520, minHeight: 420)
+        .frame(minWidth: 700, minHeight: 540)
 
         Divider()
 
-        VStack(alignment: .leading, spacing: 18) {
-          Text("Details")
+        VStack(alignment: .leading, spacing: 14) {
+          Text("Inspector")
             .font(.headline)
           detailRow("Format", details.format)
           detailRow("Dimensions", details.dimensions)
@@ -622,44 +794,12 @@ private struct AssetPreviewPanel: View {
           detailRow("Path", details.path)
 
           Spacer()
-
-          VStack(alignment: .leading, spacing: 10) {
-            Button {
-              NSWorkspace.shared.activateFileViewerSelecting([asset.url])
-            } label: {
-              Label("Show in Finder", systemImage: "finder")
-            }
-            Button {
-              AssetClipboard.copyPath(asset.url)
-            } label: {
-              Label("Copy Path", systemImage: "doc.on.doc")
-            }
-            Button {
-              AssetClipboard.copyMarkdownImage(asset)
-            } label: {
-              Label("Copy Markdown Image", systemImage: "text.badge.plus")
-            }
-            Button {
-              onExport()
-            } label: {
-              Label("Export Image…", systemImage: "square.and.arrow.up")
-            }
-            Button {
-              onToggleSelection()
-            } label: {
-              Label(
-                isSelected ? "Remove from Export Selection" : "Select for Export",
-                systemImage: isSelected ? "checkmark.circle.fill" : "circle"
-              )
-            }
-          }
-          .buttonStyle(.bordered)
         }
-        .padding(20)
-        .frame(width: 300)
+        .padding(18)
+        .frame(width: 248)
       }
     }
-    .frame(minWidth: 860, minHeight: 560)
+    .frame(minWidth: 1_020, minHeight: 680)
   }
 
   private func detailRow(_ label: String, _ value: String) -> some View {
@@ -672,6 +812,54 @@ private struct AssetPreviewPanel: View {
         .textSelection(.enabled)
         .lineLimit(label == "Path" ? 3 : 1)
     }
+  }
+}
+
+private struct AssetPreviewToolbar: View {
+  let asset: ImageAsset
+  let isSelected: Bool
+  let onToggleSelection: () -> Void
+  let onExport: () -> Void
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Button {
+        NSWorkspace.shared.activateFileViewerSelecting([asset.url])
+      } label: {
+        Label("Finder", systemImage: "finder")
+      }
+      .help("Show in Finder")
+
+      Button {
+        onExport()
+      } label: {
+        Label("Export", systemImage: "square.and.arrow.up")
+      }
+      .help("Export image")
+
+      Button {
+        onToggleSelection()
+      } label: {
+        Label(
+          isSelected ? "Selected" : "Select",
+          systemImage: isSelected ? "checkmark.circle.fill" : "circle"
+        )
+      }
+      .help(isSelected ? "Remove from export selection" : "Select for export")
+
+      Menu {
+        Button("Copy Path") {
+          AssetClipboard.copyPath(asset.url)
+        }
+        Button("Copy Markdown Image") {
+          AssetClipboard.copyMarkdownImage(asset)
+        }
+      } label: {
+        Label("Copy", systemImage: "doc.on.doc")
+      }
+      .help("Copy path or Markdown image reference")
+    }
+    .buttonStyle(.bordered)
   }
 }
 
@@ -689,6 +877,15 @@ private enum AssetClipboard {
       .replacingOccurrences(of: ">", with: "%3E")
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString("![\(altText)](<\(path)>)", forType: .string)
+  }
+}
+
+extension URL {
+  fileprivate func isContained(in rootURL: URL) -> Bool {
+    let candidatePath = standardizedFileURL.path
+    let rootPath = rootURL.standardizedFileURL.path
+    return candidatePath == rootPath
+      || candidatePath.hasPrefix(rootPath + "/")
   }
 }
 

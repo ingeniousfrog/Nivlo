@@ -145,6 +145,30 @@ final class LibraryModel: ObservableObject {
     await scanActiveRoot(rootURL)
   }
 
+  func removeFolder(_ root: LibraryRoot) async {
+    errorMessage = nil
+    do {
+      _ = try await repository.replaceAssets(
+        in: URL(filePath: root.pathHint),
+        with: []
+      )
+      try await rootAccessManager.remove(rootID: root.id)
+      roots = try await repository.libraryRoots()
+      assets = try await repository.assets()
+      enrichments = Dictionary(
+        uniqueKeysWithValues: try await repository.enrichments()
+          .map { ($0.assetID, $0) }
+      )
+      updateSimilarityGroups()
+      await startWatchingActiveRoots()
+      await startBackgroundValidation()
+      statusMessage = "\(assets.count) images indexed · removed \(root.displayName)"
+    } catch {
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn’t remove folder"
+    }
+  }
+
   func filteredAssets(query: AssetQuery) -> [ImageAsset] {
     query.apply(to: assets, enrichments: enrichments)
   }
