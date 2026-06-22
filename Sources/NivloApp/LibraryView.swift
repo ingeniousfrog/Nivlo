@@ -134,6 +134,15 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
       "请选择其他文件名。Nivlo 不会覆盖原文件。"
     )
   }
+  var videoEditorTitle: String { text("Nivlo Video Editor", "Nivlo 视频编辑器") }
+  var trimVideo: String { text("Trim Video", "裁剪视频") }
+  var trimStart: String { text("Start", "开始") }
+  var trimEnd: String { text("End", "结束") }
+  var exportTrimmedVideo: String { text("Export Trimmed Video", "导出裁剪视频") }
+  var exportingVideo: String { text("Exporting video…", "正在导出视频…") }
+  var videoExported: String { text("Trimmed video exported", "裁剪视频已导出") }
+  var videoExportFailed: String { text("Couldn’t export video", "无法导出视频") }
+  var videoPreviewUnavailable: String { text("Video preview unavailable", "视频无法预览") }
 
   func hideAssetMessage(_ filename: String) -> String {
     text(
@@ -934,9 +943,19 @@ private struct AssetCard: View {
     VStack(alignment: .leading, spacing: 10) {
       ZStack(alignment: .topTrailing) {
         thumbnail
-          .aspectRatio(4 / 3, contentMode: .fit)
+          .frame(maxWidth: .infinity)
+          .aspectRatio(4 / 3, contentMode: .fill)
           .clipShape(RoundedRectangle(cornerRadius: 12))
           .contentShape(RoundedRectangle(cornerRadius: 12))
+          .overlay {
+            if asset.mediaKind == .video {
+              Image(systemName: "play.circle.fill")
+                .font(.system(size: 34))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.white, .black.opacity(0.55))
+                .allowsHitTesting(false)
+            }
+          }
         if isSelected {
           Image(systemName: "checkmark.circle.fill")
             .font(.title2)
@@ -1114,13 +1133,18 @@ private struct AssetPreviewPanel: View {
       HStack(spacing: 0) {
         ZStack {
           Color(nsColor: .windowBackgroundColor)
-          AssetImageView(
-            asset: asset,
-            enrichment: enrichment,
-            maxPixelSize: 1400,
-            contentMode: .fit
-          )
-          .padding(18)
+          if asset.mediaKind == .video {
+            AssetVideoPlayerView(asset: asset)
+              .padding(18)
+          } else {
+            AssetImageView(
+              asset: asset,
+              enrichment: enrichment,
+              maxPixelSize: 1400,
+              contentMode: .fit
+            )
+            .padding(18)
+          }
         }
         .frame(minWidth: 700, minHeight: 540)
 
@@ -1142,7 +1166,18 @@ private struct AssetPreviewPanel: View {
     }
     .frame(minWidth: 1_020, minHeight: 680)
     .sheet(isPresented: $isEditorPresented) {
-      AssetEditorView(asset: asset, language: language)
+      switch asset.mediaKind {
+      case .image:
+        AssetEditorView(asset: asset, language: language)
+      case .video:
+        VideoEditorView(asset: asset, language: language)
+      case .unsupported:
+        ContentUnavailableView(
+          language.videoPreviewUnavailable,
+          systemImage: "questionmark.square.dashed"
+        )
+        .frame(minWidth: 640, minHeight: 420)
+      }
     }
     .alert(
       language.hideAssetTitle,

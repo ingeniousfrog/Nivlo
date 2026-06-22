@@ -39,6 +39,7 @@ struct AssetImageView: View {
           .controlSize(.small)
       }
     }
+    .clipped()
     .task(id: loadKey) {
       await loadImage()
     }
@@ -47,7 +48,7 @@ struct AssetImageView: View {
   private var placeholder: some View {
     ZStack {
       Color.secondary.opacity(0.12)
-      Image(systemName: "photo")
+      Image(systemName: asset.mediaKind == .video ? "film" : "photo")
         .font(.largeTitle)
         .foregroundStyle(.secondary)
     }
@@ -146,11 +147,14 @@ private enum AssetImageDataLoader {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = true
     generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+    let requestedTimes = [
+      CMTime(seconds: 0.1, preferredTimescale: 600),
+      CMTime.zero,
+    ]
     guard
-      let frame = try? generator.copyCGImage(
-        at: .zero,
-        actualTime: nil
-      )
+      let frame = requestedTimes.lazy.compactMap({
+        try? generator.copyCGImage(at: $0, actualTime: nil)
+      }).first
     else {
       return nil
     }
