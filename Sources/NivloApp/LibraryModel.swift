@@ -89,21 +89,31 @@ final class LibraryModel: ObservableObject {
     isScanning = true
     errorMessage = nil
     statusMessage = "Scanning \(rootURL.lastPathComponent)…"
+    var shouldEnrichAssets = false
 
     do {
       _ = try await rootAccessManager.register(url: rootURL)
-      let summary = try await scanner.scan(rootURL: rootURL)
       roots = try await repository.libraryRoots()
-      assets = try await repository.assets()
       await startWatchingActiveRoots()
+      statusMessage = "Added \(rootURL.lastPathComponent) · scanning…"
+
+      let summary = try await scanner.scan(rootURL: rootURL)
+      assets = try await repository.assets()
       await startBackgroundValidation()
       statusMessage = scanStatus(summary)
+      shouldEnrichAssets = true
     } catch {
       errorMessage = error.localizedDescription
-      statusMessage = "Scan failed"
+      if roots.contains(where: { $0.pathHint == rootURL.standardizedFileURL.path }) {
+        statusMessage = "Folder added · scan failed"
+      } else {
+        statusMessage = "Couldn’t add folder"
+      }
     }
     isScanning = false
-    await enrichAccessibleAssets()
+    if shouldEnrichAssets {
+      await enrichAccessibleAssets()
+    }
   }
 
   func discoverSpotlightCandidates() async {

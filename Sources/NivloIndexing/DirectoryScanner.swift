@@ -3,9 +3,18 @@ import ImageIO
 import NivloDomain
 import UniformTypeIdentifiers
 
-public enum DirectoryScannerError: Error, Equatable, Sendable {
+public enum DirectoryScannerError: Error, Equatable, LocalizedError, Sendable {
   case invalidRoot(URL)
   case enumerationFailed(URL)
+
+  public var errorDescription: String? {
+    switch self {
+    case .invalidRoot(let url):
+      return "Nivlo couldn’t read \(url.lastPathComponent) as a folder."
+    case .enumerationFailed(let url):
+      return "Nivlo couldn’t list files in \(url.lastPathComponent)."
+    }
+  }
 }
 
 public struct DirectoryListing: Sendable {
