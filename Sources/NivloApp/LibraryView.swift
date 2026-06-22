@@ -207,6 +207,31 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var aiGenerated: String { text("Generation complete", "生成完成") }
   var saveAPIKey: String { text("Save API key", "保存 API 密钥") }
   var apiKeySaved: String { text("API key saved", "API 密钥已保存") }
+  var editorCanvasHint: String {
+    text("Edits are previewed live. Export writes a new file without changing the original.", "编辑会实时预览。导出会写入新文件，不会修改原图。")
+  }
+  var editorGeometryHint: String {
+    text("Drag the yellow frame to crop. Rotation and flip apply on export.", "拖动黄色框进行裁切。旋转与翻转会体现在导出结果中。")
+  }
+  var exportingImage: String { text("Exporting image…", "正在导出图片…") }
+  var exportAudioOnly: String { text("Export Audio", "导出音频") }
+  var exportingAudio: String { text("Exporting audio…", "正在导出音频…") }
+  var audioExported: String { text("Audio exported", "音频已导出") }
+  var audioExtractDescription: String {
+    text(
+      "Exports only the audio track from the trimmed range. The original video file is not modified.",
+      "仅导出所选时间范围内的音轨，不会修改原视频文件。"
+    )
+  }
+  var audioExportHint: String {
+    text("Choose Export → Extract audio only, then pick a save location.", "在「导出」中勾选「仅提取音频」，再选择保存位置。")
+  }
+  var videoExportHint: String {
+    text("Trim, transform, and export settings apply to a new output file.", "裁剪、形变与导出设置会写入新的输出文件。")
+  }
+  var exportReadyTitle: String { text("Export ready", "导出完成") }
+  var openExportedFile: String { text("Open file", "打开文件") }
+  var trimRangeLabel: String { text("Trim range", "裁剪范围") }
 
   func hideAssetMessage(_ filename: String) -> String {
     text(
@@ -272,6 +297,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
 }
 
 struct LibraryView: View {
+  @ObservedObject var toolBootstrapper: ToolBootstrapper
+
   private enum SectionSelection: Hashable {
     case allImages
     case spotlight
@@ -552,6 +579,9 @@ struct LibraryView: View {
           systemImage: "square.and.arrow.up"
         )
       }
+      Section(language.toolsStatusTitle) {
+        ToolHealthView(bootstrapper: toolBootstrapper, language: language, compact: true)
+      }
     }
     .navigationSplitViewColumnWidth(min: 210, ideal: 240)
   }
@@ -656,7 +686,9 @@ struct LibraryView: View {
               previewAsset = asset
             }
           )
-          .padding(24)
+          .padding(.horizontal, 24)
+          .padding(.top, 20)
+          .padding(.bottom, 32)
         }
       }
       .navigationTitle(title)
@@ -1032,9 +1064,12 @@ struct AssetCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       ZStack(alignment: .topTrailing) {
-        thumbnail
-          .frame(maxWidth: .infinity)
+        Color.clear
           .aspectRatio(asset.displayAspectRatio, contentMode: .fit)
+          .overlay {
+            thumbnail
+              .scaledToFill()
+          }
           .clipShape(RoundedRectangle(cornerRadius: 12))
           .contentShape(RoundedRectangle(cornerRadius: 12))
           .overlay {

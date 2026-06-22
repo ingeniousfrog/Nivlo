@@ -12,6 +12,26 @@ private enum ImageEditorTab: String, CaseIterable, Identifiable {
   case export
 
   var id: String { rawValue }
+
+  func title(language: NivloLanguage) -> String {
+    switch self {
+    case .geometry: language.tabGeometry
+    case .adjust: language.tabAdjust
+    case .annotate: language.tabAnnotate
+    case .mask: language.tabMask
+    case .export: language.tabExport
+    }
+  }
+
+  var icon: String {
+    switch self {
+    case .geometry: "crop.rotate"
+    case .adjust: "slider.horizontal.3"
+    case .annotate: "pencil.and.outline"
+    case .mask: "paintbrush.pointed"
+    case .export: "square.and.arrow.up"
+    }
+  }
 }
 
 struct AssetEditorView: View {
@@ -36,9 +56,12 @@ struct AssetEditorView: View {
   @State private var maxHeight = ""
   @State private var targetSizeKB = ""
   @State private var exportMessage: String?
+  @State private var lastExportedURL: URL?
   @State private var isExporting = false
 
   private let pipeline = ImageEditPipeline()
+  private let sidebarWidth: CGFloat = 220
+  private let inspectorWidth: CGFloat = 320
 
   private var canEdit: Bool {
     UTType(asset.contentType)?.conforms(to: .image) == true
@@ -49,31 +72,31 @@ struct AssetEditorView: View {
       toolbar
       Divider()
       HStack(spacing: 0) {
+        tabSidebar
+        Divider()
         editorCanvas
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         Divider()
         inspector
-          .frame(width: 300)
+          .frame(width: inspectorWidth)
       }
-      if let exportMessage {
-        Text(exportMessage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .padding(.vertical, 8)
-      }
+      statusBar
     }
-    .frame(minWidth: 1_000, minHeight: 720)
+    .frame(minWidth: 1_120, minHeight: 760)
   }
 
   private var toolbar: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         Text(language.editorTitle)
           .font(.headline)
         Text(asset.filename)
           .font(.caption)
           .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
       }
+      .frame(maxWidth: 360, alignment: .leading)
       Spacer()
       if !toolsReady {
         Label(language.toolsNotReady, systemImage: "wrench.and.screwdriver")
@@ -81,59 +104,75 @@ struct AssetEditorView: View {
           .foregroundStyle(.orange)
       }
       Button {
+        selectedTab = .export
+        exportEditedCopy()
+      } label: {
+        Label(language.saveEditedCopy, systemImage: "square.and.arrow.up")
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(!canEdit || isExporting || !toolsReady)
+      Button {
         dismiss()
       } label: {
         Image(systemName: "xmark")
       }
+      .buttonStyle(.bordered)
       .keyboardShortcut(.cancelAction)
       .help(language.close)
     }
-    .buttonStyle(.bordered)
-    .padding(16)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 14)
+  }
+
+  private var tabSidebar: some View {
+    List(selection: $selectedTab) {
+      ForEach(ImageEditorTab.allCases) { tab in
+        Label(tab.title(language: language), systemImage: tab.icon)
+          .tag(tab)
+      }
+    }
+    .listStyle(.sidebar)
+    .frame(width: sidebarWidth)
   }
 
   private var editorCanvas: some View {
-    ZStack {
-      Color(nsColor: .windowBackgroundColor)
-      if canEdit {
-        AssetImageView(
-          asset: asset,
-          enrichment: nil,
-          maxPixelSize: 1_600,
-          contentMode: .fit
-        )
-        .rotationEffect(.degrees(Double(quarterTurns * 90)))
-        .scaleEffect(x: isFlippedHorizontally ? -1 : 1, y: 1)
-        .overlay {
-          if selectedTab == .geometry {
-            CropOverlayView(cropRect: $cropRect)
+    GeometryReader { proxy in
+      ZStack {
+        Color(nsColor: .underPageBackgroundColor)
+        if canEdit {
+          AssetImageView(
+            asset: asset,
+            enrichment: nil,
+            maxPixelSize: 1_800,
+            contentMode: .fit
+          )
+          .rotationEffect(.degrees(Double(quarterTurns * 90)))
+          .scaleEffect(x: isFlippedHorizontally ? -1 : 1, y: 1)
+          .overlay {
+            if selectedTab == .geometry {
+              CropOverlayView(cropRect: $cropRect)
+            }
           }
+          .padding(24)
+          .frame(maxWidth: proxy.size.width, maxHeight: proxy.size.height)
+          .animation(.snappy, value: quarterTurns)
+          .animation(.snappy, value: isFlippedHorizontally)
+        } else {
+          ContentUnavailableView(
+            "Preview unavailable",
+            systemImage: "photo.badge.exclamationmark"
+          )
         }
-        .padding(32)
-        .animation(.snappy, value: quarterTurns)
-        .animation(.snappy, value: isFlippedHorizontally)
-      } else {
-        ContentUnavailableView(
-          "Preview unavailable",
-          systemImage: "photo.badge.exclamationmark"
-        )
       }
     }
   }
 
   private var inspector: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Picker("Tab", selection: $selectedTab) {
-        Text(language.tabGeometry).tag(ImageEditorTab.geometry)
-        Text(language.tabAdjust).tag(ImageEditorTab.adjust)
-        Text(language.tabAnnotate).tag(ImageEditorTab.annotate)
-        Text(language.tabMask).tag(ImageEditorTab.mask)
-        Text(language.tabExport).tag(ImageEditorTab.export)
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
+        Text(selectedTab.title(language: language))
+          .font(.title3.weight(.semibold))
 
-      ScrollView {
         switch selectedTab {
         case .geometry:
           geometryControls
@@ -147,18 +186,50 @@ struct AssetEditorView: View {
           exportControls
         }
       }
-      Spacer()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(20)
     }
-    .padding(16)
+    .background(Color(nsColor: .windowBackgroundColor))
+  }
+
+  private var statusBar: some View {
+    HStack(spacing: 12) {
+      if isExporting {
+        ProgressView()
+          .controlSize(.small)
+        Text(language.exportingImage)
+      } else if let exportMessage {
+        Text(exportMessage)
+      } else {
+        Text(language.editorCanvasHint)
+      }
+      Spacer()
+      if let lastExportedURL {
+        Button(language.showInFinder) {
+          NSWorkspace.shared.activateFileViewerSelecting([lastExportedURL])
+        }
+        .controlSize(.small)
+      }
+    }
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 10)
+    .background(.bar)
   }
 
   private var geometryControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Button { quarterTurns = normalizedQuarterTurns(quarterTurns - 1) } label: {
-        Label(language.rotateLeft, systemImage: "rotate.left")
-      }
-      Button { quarterTurns = normalizedQuarterTurns(quarterTurns + 1) } label: {
-        Label(language.rotateRight, systemImage: "rotate.right")
+    VStack(alignment: .leading, spacing: 12) {
+      Text(language.editorGeometryHint)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      HStack(spacing: 8) {
+        Button { quarterTurns = normalizedQuarterTurns(quarterTurns - 1) } label: {
+          Label(language.rotateLeft, systemImage: "rotate.left")
+        }
+        Button { quarterTurns = normalizedQuarterTurns(quarterTurns + 1) } label: {
+          Label(language.rotateRight, systemImage: "rotate.right")
+        }
       }
       Button { isFlippedHorizontally.toggle() } label: {
         Label(language.flipHorizontal, systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
@@ -172,7 +243,7 @@ struct AssetEditorView: View {
   }
 
   private var adjustControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 14) {
       sliderRow(language.adjustExposure, value: $adjustments.exposure, range: -1...1)
       sliderRow(language.adjustContrast, value: $adjustments.contrast, range: -0.5...0.5)
       sliderRow(language.adjustSaturation, value: $adjustments.saturation, range: -0.5...0.5)
@@ -181,7 +252,7 @@ struct AssetEditorView: View {
   }
 
   private var annotateControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 12) {
       Button(language.addTextAnnotation) {
         annotations.append(
           ImageAnnotation(
@@ -219,7 +290,7 @@ struct AssetEditorView: View {
   }
 
   private var maskControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 12) {
       ForEach($layers) { $layer in
         Toggle(layerTitle(layer.kind), isOn: $layer.isVisible)
       }
@@ -243,19 +314,15 @@ struct AssetEditorView: View {
 
   private func layerTitle(_ kind: EditorLayerKind) -> String {
     switch kind {
-    case .background:
-      language.layerBackground
-    case .adjustments:
-      language.layerAdjustments
-    case .annotations:
-      language.layerAnnotations
-    case .mask:
-      language.layerMask
+    case .background: language.layerBackground
+    case .adjustments: language.layerAdjustments
+    case .annotations: language.layerAnnotations
+    case .mask: language.layerMask
     }
   }
 
   private var exportControls: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 14) {
       Picker(language.exportFormat, selection: $outputFormat) {
         ForEach(PicxOutputFormat.allCases, id: \.self) { format in
           Text(format.rawValue.uppercased()).tag(format)
@@ -331,6 +398,7 @@ struct AssetEditorView: View {
     Task {
       do {
         let result = try await pipeline.export(request)
+        lastExportedURL = result.outputURL
         exportMessage = "\(language.editorExported) · \(formattedBytes(result.outputSize))"
         onExport(result, request)
       } catch {
@@ -342,14 +410,10 @@ struct AssetEditorView: View {
 
   private func uti(for format: PicxOutputFormat) -> UTType {
     switch format {
-    case .webp:
-      UTType(filenameExtension: "webp") ?? .data
-    case .avif:
-      UTType(filenameExtension: "avif") ?? .data
-    case .jpg:
-      .jpeg
-    case .png:
-      .png
+    case .webp: UTType(filenameExtension: "webp") ?? .data
+    case .avif: UTType(filenameExtension: "avif") ?? .data
+    case .jpg: .jpeg
+    case .png: .png
     }
   }
 

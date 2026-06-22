@@ -8,13 +8,16 @@ extension ImageAsset {
       pixelWidth > 0,
       pixelHeight > 0
     else {
-      return 4.0 / 3.0
+      return mediaKind == .video ? 16.0 / 9.0 : 4.0 / 3.0
     }
     return min(2, max(0.5, Double(pixelWidth) / Double(pixelHeight)))
   }
 }
 
 public enum AssetMasonryLayout {
+  /// Relative height reserved for filename, metadata, and card padding below the thumbnail.
+  public static let cardChromeHeightRatio = 0.34
+
   public static func columns(
     for assets: [ImageAsset],
     columnCount: Int
@@ -29,7 +32,8 @@ public enum AssetMasonryLayout {
           estimatedHeights[$0] < estimatedHeights[$1]
         } ?? 0
       columns[targetIndex].append(asset)
-      estimatedHeights[targetIndex] += 1 / asset.displayAspectRatio
+      estimatedHeights[targetIndex] +=
+        (1 / asset.displayAspectRatio) + cardChromeHeightRatio
     }
     return columns
   }
