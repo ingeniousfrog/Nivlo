@@ -95,14 +95,11 @@ public struct SpotlightQueryConfiguration: Equatable, Sendable {
 
 public enum SpotlightCandidateSourceError: Error, LocalizedError, Sendable {
   case couldNotStart
-  case timedOut
 
   public var errorDescription: String? {
     switch self {
     case .couldNotStart:
       "Spotlight could not start an image metadata query."
-    case .timedOut:
-      "Spotlight image discovery timed out."
     }
   }
 }
@@ -146,8 +143,8 @@ public final class SpotlightCandidateSource: SpotlightDiscovering {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: configuration.timeout)
     while query.isGathering {
-      guard clock.now < deadline else {
-        throw SpotlightCandidateSourceError.timedOut
+      if clock.now >= deadline {
+        break
       }
       try await Task.sleep(for: .milliseconds(50))
     }

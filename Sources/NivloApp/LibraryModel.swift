@@ -7,6 +7,12 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class LibraryModel: ObservableObject {
+  enum SpotlightDiscoveryState: Equatable {
+    case checking
+    case ready(candidateCount: Int)
+    case unavailable(reason: String)
+  }
+
   @Published private(set) var assets: [ImageAsset] = []
   @Published private(set) var hiddenAssets: [HiddenAssetRecord] = []
   @Published private(set) var roots: [LibraryRoot] = []
@@ -19,7 +25,7 @@ final class LibraryModel: ObservableObject {
   @Published private(set) var isDiscoveringSpotlight = false
   @Published private(set) var statusMessage = "Choose a folder to begin."
   @Published private(set) var enrichmentStatusMessage = "Rich index pending"
-  @Published private(set) var spotlightStatusMessage = "Checking Spotlight…"
+  @Published private(set) var spotlightDiscoveryState: SpotlightDiscoveryState = .checking
   @Published private(set) var validationStatusMessage = "Validation idle"
   @Published private(set) var processingStatusMessage = "Processing idle"
   @Published var errorMessage: String?
@@ -124,15 +130,12 @@ final class LibraryModel: ObservableObject {
       return
     }
     isDiscoveringSpotlight = true
-    spotlightStatusMessage = "Checking Spotlight…"
+    spotlightDiscoveryState = .checking
     do {
       spotlightCandidates = try await spotlightSource.discover()
-      spotlightStatusMessage =
-        spotlightCandidates.isEmpty
-        ? "No Spotlight candidates"
-        : "\(spotlightCandidates.count) quick candidates"
+      spotlightDiscoveryState = .ready(candidateCount: spotlightCandidates.count)
     } catch {
-      spotlightStatusMessage = "Spotlight unavailable"
+      spotlightDiscoveryState = .unavailable(reason: error.localizedDescription)
     }
     isDiscoveringSpotlight = false
   }

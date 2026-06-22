@@ -79,7 +79,41 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var similar: String { text("Similar", "相似图片") }
   var size: String { text("Size", "大小") }
   var smartViews: String { text("Smart Views", "智能视图") }
-  var spotlightDiscovery: String { text("Mac Spotlight Discovery", "Mac Spotlight 发现") }
+  var explore: String { text("Explore", "探索") }
+  var exploreTitle: String { text("Explore local images", "探索本地图片") }
+  var exploreDescription: String {
+    text(
+      "Nivlo uses the image index already maintained by macOS to quickly suggest local folders. Nothing is uploaded, and folders are indexed only after you choose to add them.",
+      "Nivlo 会利用 macOS 已维护的图片索引，快速发现本机可能包含素材的文件夹。图片不会上传，只有你主动添加的文件夹才会进入 Nivlo 索引。"
+    )
+  }
+  var exploreSuggestedImages: String { text("Suggested local images", "建议的本地图片") }
+  var exploreSuggestionDescription: String {
+    text(
+      "Choose an image to add its containing folder to Nivlo.",
+      "选择一张图片，将它所在的文件夹添加到 Nivlo。"
+    )
+  }
+  var addFolderDirectly: String { text("Add Folder Directly", "直接添加文件夹") }
+  var addContainingFolder: String { text("Add Containing Folder", "添加所在文件夹") }
+  var findingLocalImages: String {
+    text("Finding images already indexed by macOS…", "正在查找 macOS 已索引的图片…")
+  }
+  var noExploreSuggestions: String { text("No suggestions yet", "暂无探索建议") }
+  var noExploreSuggestionsDescription: String {
+    text(
+      "macOS did not return any indexed images. You can still add folders directly.",
+      "macOS 暂未返回已索引图片，你仍然可以直接添加文件夹。"
+    )
+  }
+  var exploreUnavailable: String { text("Explore unavailable", "探索暂不可用") }
+  var exploreUnavailableDescription: String {
+    text(
+      "Spotlight could not start. Check that Spotlight indexing is enabled, then try again. Installing Nivlo is not required.",
+      "Spotlight 查询无法启动。请确认系统已开启 Spotlight 索引后重试；无需先安装 Nivlo。"
+    )
+  }
+  var discovering: String { text("Discovering…", "正在探索…") }
   var status: String { text("Status", "状态") }
   var validateIndex: String { text("Validate Index", "校验索引") }
   var copyPath: String { text("Copy path", "复制路径") }
@@ -105,6 +139,26 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
     text(
       "Nivlo will hide \(filename) from this app and keep the original file untouched in Finder.",
       "Nivlo 会在本应用中隐藏 \(filename)，但不会修改或删除访达中的原文件。"
+    )
+  }
+
+  func spotlightStatus(_ state: LibraryModel.SpotlightDiscoveryState) -> String {
+    switch state {
+    case .checking:
+      discovering
+    case .ready(let candidateCount):
+      candidateCount == 0
+        ? text("No suggestions", "暂无建议")
+        : text("\(candidateCount) suggestions", "\(candidateCount) 条建议")
+    case .unavailable(let reason):
+      text("Explore unavailable: \(reason)", "探索暂不可用")
+    }
+  }
+
+  func exploreFailureDescription(_ reason: String) -> String {
+    text(
+      "\(exploreUnavailableDescription)\n\nSystem detail: \(reason)",
+      exploreUnavailableDescription
     )
   }
 
@@ -326,7 +380,7 @@ struct LibraryView: View {
         Label(language.allImages, systemImage: "photo.on.rectangle.angled")
           .badge(model.assets.count)
           .tag(SectionSelection.allImages)
-        Label(language.spotlightDiscovery, systemImage: "sparkle.magnifyingglass")
+        Label(language.explore, systemImage: "sparkle.magnifyingglass")
           .badge(model.spotlightCandidates.count)
           .tag(SectionSelection.spotlight)
         Label(language.duplicates, systemImage: "square.on.square")
@@ -378,7 +432,7 @@ struct LibraryView: View {
             : "checkmark.circle"
         )
         Label(
-          model.spotlightStatusMessage,
+          language.spotlightStatus(model.spotlightDiscoveryState),
           systemImage: model.isDiscoveringSpotlight
             ? "magnifyingglass"
             : "bolt.horizontal.circle"
@@ -685,24 +739,23 @@ struct LibraryView: View {
       VStack(alignment: .leading, spacing: 20) {
         SpotlightExplainerCard(
           isDiscovering: model.isDiscoveringSpotlight,
-          statusMessage: model.spotlightStatusMessage,
+          state: model.spotlightDiscoveryState,
+          language: language,
           onAddFolder: chooseFolderToIndex
         )
 
         if !model.spotlightCandidates.isEmpty {
           VStack(alignment: .leading, spacing: 8) {
-            Text("Suggested local images")
+            Text(language.exploreSuggestedImages)
               .font(.headline)
-            Text(
-              "Pick a suggestion to add its containing folder to Nivlo’s own index."
-            )
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            Text(language.exploreSuggestionDescription)
+              .font(.callout)
+              .foregroundStyle(.secondary)
           }
 
           LazyVGrid(columns: columns, spacing: 20) {
             ForEach(model.spotlightCandidates) { candidate in
-              SpotlightCandidateCard(candidate: candidate) {
+              SpotlightCandidateCard(candidate: candidate, language: language) {
                 Task {
                   await model.addFolder(candidate.url.deletingLastPathComponent())
                   await MainActor.run {
@@ -713,27 +766,32 @@ struct LibraryView: View {
             }
           }
         } else if model.isDiscoveringSpotlight {
-          ProgressView("Finding images already indexed by macOS…")
+          ProgressView(language.findingLocalImages)
             .frame(maxWidth: .infinity, minHeight: 160)
+        } else if case .unavailable(let reason) = model.spotlightDiscoveryState {
+          ContentUnavailableView(
+            language.exploreUnavailable,
+            systemImage: "exclamationmark.magnifyingglass",
+            description: Text(language.exploreFailureDescription(reason))
+          )
         } else {
           ContentUnavailableView(
-            "No Spotlight suggestions yet",
+            language.noExploreSuggestions,
             systemImage: "sparkle.magnifyingglass",
-            description: Text(
-              "This only means macOS did not return candidates to Nivlo. Direct folder indexing still works."
-            )
+            description: Text(language.noExploreSuggestionsDescription)
           )
         }
       }
       .padding(24)
     }
-    .navigationTitle("Mac Spotlight Discovery")
+    .navigationTitle(language.explore)
   }
 }
 
 private struct SpotlightExplainerCard: View {
   let isDiscovering: Bool
-  let statusMessage: String
+  let state: LibraryModel.SpotlightDiscoveryState
+  let language: NivloLanguage
   let onAddFolder: () -> Void
 
   var body: some View {
@@ -745,19 +803,17 @@ private struct SpotlightExplainerCard: View {
           .frame(width: 38)
 
         VStack(alignment: .leading, spacing: 8) {
-          Text("Spotlight is only a discovery shortcut")
+          Text(language.exploreTitle)
             .font(.title3.weight(.semibold))
-          Text(
-            "Nivlo asks macOS Spotlight for images the system already knows about, then lets you add the containing folders to Nivlo’s own local index. Spotlight is not the source of truth and it is not limited to folders you already added."
-          )
-          .font(.callout)
-          .foregroundStyle(.secondary)
+          Text(language.exploreDescription)
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
       }
 
       HStack(spacing: 10) {
         Label(
-          isDiscovering ? "Discovering…" : statusMessage,
+          isDiscovering ? language.discovering : language.spotlightStatus(state),
           systemImage: isDiscovering ? "hourglass" : "info.circle"
         )
         .font(.caption)
@@ -765,7 +821,7 @@ private struct SpotlightExplainerCard: View {
 
         Spacer()
 
-        Button("Add Folder Directly") {
+        Button(language.addFolderDirectly) {
           onAddFolder()
         }
         .buttonStyle(.borderedProminent)
@@ -778,6 +834,7 @@ private struct SpotlightExplainerCard: View {
 
 private struct SpotlightCandidateCard: View {
   let candidate: SpotlightCandidate
+  let language: NivloLanguage
   let onAddFolder: () -> Void
 
   var body: some View {
@@ -802,7 +859,7 @@ private struct SpotlightCandidateCard: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      Button("Add Containing Folder") {
+      Button(language.addContainingFolder) {
         onAddFolder()
       }
       .buttonStyle(.bordered)
@@ -810,10 +867,10 @@ private struct SpotlightCandidateCard: View {
     .padding(10)
     .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
     .contextMenu {
-      Button("Show in Finder") {
+      Button(language.showInFinder) {
         NSWorkspace.shared.activateFileViewerSelecting([candidate.url])
       }
-      Button("Copy Path") {
+      Button(language.copyPath) {
         AssetClipboard.copyPath(candidate.url)
       }
     }
