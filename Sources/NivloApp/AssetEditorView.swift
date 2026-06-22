@@ -305,7 +305,7 @@ struct AssetEditorView: View {
             .contentShape(Rectangle())
           }
           .buttonStyle(.bordered)
-          .tint(selectedTool == tool ? Color.accentColor : .secondary)
+          .tint(selectedTool == tool ? Color.accentColor : .primary)
         }
       }
     }

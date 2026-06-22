@@ -13,6 +13,7 @@ struct AISettingsView: View {
   @AppStorage("nivlo.library.refreshInterval")
   private var refreshIntervalRawValue = LibraryRefreshInterval.fifteenMinutes.rawValue
   @AppStorage("nivlo.language") private var languageRawValue = NivloLanguage.english.rawValue
+  @AppStorage(AppAppearance.storageKey) private var appearanceRawValue = AppAppearance.light.rawValue
 
   private var language: NivloLanguage {
     NivloLanguage(rawValue: languageRawValue) ?? .english
@@ -21,6 +22,11 @@ struct AISettingsView: View {
   var body: some View {
     Form {
       Section(language.library) {
+        Picker(language.appearance, selection: $appearanceRawValue) {
+          Text(language.appearanceLight).tag(AppAppearance.light.rawValue)
+          Text(language.appearanceDark).tag(AppAppearance.dark.rawValue)
+          Text(language.appearanceSystem).tag(AppAppearance.system.rawValue)
+        }
         Picker(language.autoRefresh, selection: $refreshIntervalRawValue) {
           ForEach(LibraryRefreshInterval.allCases) { interval in
             Text(refreshIntervalTitle(interval)).tag(interval.rawValue)

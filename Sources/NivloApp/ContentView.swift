@@ -6,6 +6,7 @@ struct ContentView: View {
 
   var body: some View {
     LibraryView(toolBootstrapper: toolBootstrapper)
+      .nivloAppAppearance()
       .task {
         toolBootstrapper.ensureToolsReady()
       }

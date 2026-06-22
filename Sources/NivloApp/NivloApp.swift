@@ -15,6 +15,7 @@ struct NivloApp: App {
 
     Settings {
       AISettingsView()
+        .nivloAppAppearance()
     }
   }
 }
@@ -23,6 +24,7 @@ private final class NivloAppDelegate: NSObject, NSApplicationDelegate {
   private var fallbackWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    AppAppearance.applyStoredAppearance()
     NSApp.setActivationPolicy(.regular)
     DispatchQueue.main.async { [weak self] in
       self?.ensureVisibleMainWindow()

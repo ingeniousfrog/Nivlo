@@ -61,7 +61,7 @@ struct ToolHealthView: View {
     .foregroundStyle(
       bootstrapper.isReady
         ? .green
-        : bootstrapper.manifest.phase == .failed ? .orange : .secondary
+        : bootstrapper.manifest.phase == .failed ? .orange : .primary.opacity(0.55)
     )
   }
 }

@@ -270,6 +270,10 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var editorTools: String { text("Tools", "工具") }
   var chooseExportLocation: String { text("Choose Location…", "选择保存位置…") }
   var openSettings: String { text("Settings", "设置") }
+  var appearance: String { text("Appearance", "外观") }
+  var appearanceLight: String { text("Light", "亮色") }
+  var appearanceDark: String { text("Dark", "深色") }
+  var appearanceSystem: String { text("Match System", "跟随系统") }
   var aiSettingsTitle: String { text("AI Generation", "AI 生成") }
   var aiConfigureInSettings: String {
     text("Configure your provider and API key in Settings (⌘,).", "请在设置（⌘,）中配置提供方与 API Key。")
@@ -1114,7 +1118,7 @@ private struct SpotlightExplainerCard: View {
       }
     }
     .padding(18)
-    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
+    .background(cardSurfaceBackground(cornerRadius: 18))
   }
 }
 
@@ -1127,11 +1131,11 @@ private struct SpotlightCandidateCard: View {
     VStack(alignment: .leading, spacing: 10) {
       ZStack {
         RoundedRectangle(cornerRadius: 12)
-          .fill(.quaternary)
+          .fill(Color(nsColor: .controlBackgroundColor))
           .aspectRatio(4 / 3, contentMode: .fit)
         Image(systemName: "photo")
           .font(.system(size: 34))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.primary.opacity(0.35))
       }
       Text(candidate.displayName)
         .font(.headline)
@@ -1151,7 +1155,7 @@ private struct SpotlightCandidateCard: View {
       .buttonStyle(.bordered)
     }
     .padding(10)
-    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+    .background(cardSurfaceBackground(cornerRadius: 16))
     .contextMenu {
       Button(language.showInFinder) {
         NSWorkspace.shared.activateFileViewerSelecting([candidate.url])
@@ -1190,11 +1194,15 @@ private struct FolderSidebarRow: View {
           onRemove()
         }
       } label: {
-        Image(systemName: "ellipsis.circle")
-          .imageScale(.small)
-          .foregroundStyle(.secondary)
+        Image(systemName: "ellipsis.circle.fill")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(Color(nsColor: .labelColor))
+          .symbolRenderingMode(.monochrome)
+          .frame(width: 20, height: 20)
+          .contentShape(Rectangle())
       }
-      .menuStyle(.borderlessButton)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
       .fixedSize()
     }
     .contextMenu {
@@ -1265,7 +1273,7 @@ struct AssetCard: View {
     }
     .padding(10)
     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+    .background(cardSurfaceBackground(cornerRadius: 16))
     .overlay {
       RoundedRectangle(cornerRadius: 16)
         .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
@@ -1310,10 +1318,10 @@ private struct HiddenAssetCard: View {
       } else {
         ZStack {
           RoundedRectangle(cornerRadius: 12)
-            .fill(.quaternary)
+            .fill(Color(nsColor: .controlBackgroundColor))
           Image(systemName: "eye.slash")
             .font(.largeTitle)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary.opacity(0.35))
         }
         .aspectRatio(4 / 3, contentMode: .fit)
       }
@@ -1345,7 +1353,7 @@ private struct HiddenAssetCard: View {
     }
     .padding(10)
     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+    .background(cardSurfaceBackground(cornerRadius: 16))
   }
 }
 
@@ -1852,4 +1860,14 @@ extension AssetSource {
       "Other"
     }
   }
+}
+
+@ViewBuilder
+private func cardSurfaceBackground(cornerRadius: CGFloat) -> some View {
+  let shape = RoundedRectangle(cornerRadius: cornerRadius)
+  shape
+    .fill(Color(nsColor: .controlBackgroundColor))
+    .overlay {
+      shape.strokeBorder(.separator.opacity(0.35), lineWidth: 1)
+    }
 }
