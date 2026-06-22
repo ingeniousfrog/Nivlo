@@ -12,6 +12,10 @@ struct NivloApp: App {
         .frame(minWidth: 900, minHeight: 620)
     }
     .defaultSize(width: 1100, height: 720)
+
+    Settings {
+      AISettingsView()
+    }
   }
 }
 

@@ -36,6 +36,24 @@ public struct NormalizedCropRect: Equatable, Sendable, Codable {
     let y = max(0, Int((clamped.y * Double(imageHeight)).rounded()))
     return (x: x, y: y, width: width, height: height)
   }
+
+  /// Maps a top-left normalized rect into Core Image's bottom-left coordinate space.
+  public func ciCropCGRect(imageWidth: CGFloat, imageHeight: CGFloat) -> CGRect {
+    let value = clamped()
+    let x = value.x * imageWidth
+    let y = (1 - value.y - value.height) * imageHeight
+    let width = value.width * imageWidth
+    let height = value.height * imageHeight
+    return CGRect(
+      origin: CGPoint(x: x, y: y),
+      size: CGSize(width: width, height: height)
+    )
+  }
+
+  public var isEffectivelyFull: Bool {
+    let value = clamped()
+    return value.x <= 0.001 && value.y <= 0.001 && value.width >= 0.999 && value.height >= 0.999
+  }
 }
 
 public struct ImageAdjustmentSettings: Equatable, Sendable, Codable {

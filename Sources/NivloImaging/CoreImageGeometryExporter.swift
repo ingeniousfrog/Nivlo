@@ -43,23 +43,6 @@ public struct CoreImageGeometryExporter: Sendable {
       throw CoreImageGeometryExporterError.unreadableImage
     }
 
-    let pixelCrop = cropRect.pixelRect(
-      imageWidth: Int(image.extent.width.rounded()),
-      imageHeight: Int(image.extent.height.rounded())
-    )
-    let cropCGRect = CGRect(
-      x: pixelCrop.x,
-      y: pixelCrop.y,
-      width: pixelCrop.width,
-      height: pixelCrop.height
-    )
-    if cropCGRect.width > 0, cropCGRect.height > 0 {
-      image = image.cropped(to: cropCGRect)
-      image = image.transformed(
-        by: CGAffineTransform(translationX: -cropCGRect.minX, y: -cropCGRect.minY)
-      )
-    }
-
     let center = CGPoint(x: image.extent.midX, y: image.extent.midY)
     var transform = CGAffineTransform(translationX: center.x, y: center.y)
     if flippedHorizontally {
@@ -70,10 +53,24 @@ public struct CoreImageGeometryExporter: Sendable {
     transform = transform.translatedBy(x: -center.x, y: -center.y)
     image = image.transformed(by: transform)
 
-    let extent = image.extent.integral
+    var extent = image.extent.integral
     image = image.transformed(
       by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
     )
+
+    if !cropRect.isEffectivelyFull {
+      let cropCGRect = cropRect.ciCropCGRect(
+        imageWidth: extent.width,
+        imageHeight: extent.height
+      )
+      if cropCGRect.width > 0, cropCGRect.height > 0 {
+        image = image.cropped(to: cropCGRect)
+        image = image.transformed(
+          by: CGAffineTransform(translationX: -cropCGRect.minX, y: -cropCGRect.minY)
+        )
+        extent = image.extent.integral
+      }
+    }
     image = applyAdjustments(
       adjustments,
       to: image,
@@ -177,7 +174,12 @@ public struct CoreImageGeometryExporter: Sendable {
         imageWidth: Int(extent.width),
         imageHeight: Int(extent.height)
       )
-      let rect = CGRect(x: pixel.x, y: pixel.y, width: pixel.width, height: pixel.height)
+      let rect = CGRect(
+        x: CGFloat(pixel.x),
+        y: extent.height - CGFloat(pixel.y) - CGFloat(pixel.height),
+        width: CGFloat(pixel.width),
+        height: CGFloat(pixel.height)
+      )
       switch annotation.kind {
       case .rectangle:
         context?.setStrokeColor(NSColor.systemYellow.cgColor)

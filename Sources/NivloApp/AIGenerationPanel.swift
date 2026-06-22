@@ -8,13 +8,13 @@ struct AIGenerationPanel: View {
   let language: NivloLanguage
   let onGenerated: (GenerationResult) -> Void
 
+  @AppStorage(AIConfiguration.defaultProviderKey)
+  private var selectedAdapterID = GenerationAdapterRegistry.all.first?.id ?? "openai-images"
   @State private var capability: GenerationCapability = .textToImage
   @State private var prompt = ""
   @State private var negativePrompt = ""
   @State private var strength = 0.75
   @State private var steps = 30
-  @State private var selectedAdapterID = GenerationAdapterRegistry.all.first?.id ?? "openai-images"
-  @State private var apiKey = ""
   @State private var statusMessage: String?
   @State private var isGenerating = false
 
@@ -22,58 +22,62 @@ struct AIGenerationPanel: View {
     GenerationAdapterRegistry.all.first { $0.id == selectedAdapterID }
   }
 
+  private var hasAPIKey: Bool {
+    guard let key = APIKeyStore.load(providerID: selectedAdapterID) else { return false }
+    return !key.isEmpty
+  }
+
   var body: some View {
-    Form {
-      Picker(language.aiProvider, selection: $selectedAdapterID) {
-        ForEach(GenerationAdapterRegistry.all, id: \.id) { adapter in
-          Text(adapter.displayName).tag(adapter.id)
+    VStack(alignment: .leading, spacing: 14) {
+      if !hasAPIKey {
+        ContentUnavailableView {
+          Label(language.aiMissingAPIKeyHint, systemImage: "key.slash")
+        } description: {
+          Text(language.aiConfigureInSettings)
+        } actions: {
+          Button(language.openSettings) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+          }
         }
-      }
-      SecureField(language.aiAPIKey, text: $apiKey)
-        .onAppear {
-          apiKey = APIKeyStore.load(providerID: selectedAdapterID) ?? ""
+      } else {
+        Form {
+          Picker(language.aiCapability, selection: $capability) {
+            ForEach(GenerationCapability.allCases, id: \.self) { item in
+              Text(item.rawValue).tag(item)
+            }
+          }
+          TextField(language.aiPrompt, text: $prompt, axis: .vertical)
+            .lineLimit(3...6)
+          TextField(language.aiNegativePrompt, text: $negativePrompt, axis: .vertical)
+            .lineLimit(2...4)
+          Slider(value: $strength, in: 0...1) {
+            Text(language.aiStrength)
+          }
+          Stepper(value: $steps, in: 10...80) {
+            Text("\(language.aiSteps): \(steps)")
+          }
+          Button(language.aiGenerate) {
+            generate()
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(isGenerating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          if let statusMessage {
+            Text(statusMessage)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
         }
-        .onChange(of: selectedAdapterID) { _, newValue in
-          apiKey = APIKeyStore.load(providerID: newValue) ?? ""
-        }
-      Picker(language.aiCapability, selection: $capability) {
-        ForEach(GenerationCapability.allCases, id: \.self) { item in
-          Text(item.rawValue).tag(item)
-        }
-      }
-      TextField(language.aiPrompt, text: $prompt, axis: .vertical)
-        .lineLimit(3...6)
-      TextField(language.aiNegativePrompt, text: $negativePrompt, axis: .vertical)
-        .lineLimit(2...4)
-      Slider(value: $strength, in: 0...1) {
-        Text(language.aiStrength)
-      }
-      Stepper(value: $steps, in: 10...80) {
-        Text("\(language.aiSteps): \(steps)")
-      }
-      HStack {
-        Button(language.saveAPIKey) {
-          try? APIKeyStore.save(providerID: selectedAdapterID, apiKey: apiKey)
-          statusMessage = language.apiKeySaved
-        }
-        Button(language.aiGenerate) {
-          generate()
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(isGenerating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-      }
-      if let statusMessage {
-        Text(statusMessage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        .formStyle(.grouped)
       }
     }
-    .formStyle(.grouped)
-    .frame(minWidth: 360)
   }
 
   private func generate() {
     guard let adapter = selectedAdapter else {
+      return
+    }
+    guard hasAPIKey else {
+      statusMessage = language.aiMissingAPIKeyHint
       return
     }
     let panel = NSSavePanel()
@@ -97,7 +101,6 @@ struct AIGenerationPanel: View {
     )
     Task {
       do {
-        try? APIKeyStore.save(providerID: selectedAdapterID, apiKey: apiKey)
         let result = try await adapter.generate(request)
         statusMessage = language.aiGenerated
         onGenerated(result)

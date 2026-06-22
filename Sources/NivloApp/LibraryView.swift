@@ -212,14 +212,14 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorGeometryHint: String {
     text(
-      "Drag handles or edges to crop. Use Apply to commit, Preview to check the result.",
-      "拖动手柄或边缘进行裁切。Apply 提交，Preview 预览效果。"
+      "Drag handles or the frame to crop. Preview to render, Revert to undo since last preview.",
+      "拖动手柄或框体进行裁切。Preview 渲染预览，Revert 恢复上次预览前的状态。"
     )
   }
   var editorAdjustHint: String {
     text(
-      "Tune sliders, then Preview or Apply. Revert restores the last applied values.",
-      "调节滑块后可 Preview 或 Apply。Revert 恢复上次已提交的值。"
+      "Tune sliders, then Preview to check the result. Revert restores the last previewed values.",
+      "调节滑块后 Preview 查看效果。Revert 恢复上次预览时的参数。"
     )
   }
   var maskBrushHint: String {
@@ -229,10 +229,17 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
     )
   }
   var maskBrushSize: String { text("Brush size", "画笔大小") }
-  var applyChanges: String { text("Apply", "应用") }
   var previewChanges: String { text("Preview", "预览") }
   var revertChanges: String { text("Revert", "还原") }
-  var changesApplied: String { text("Changes applied", "更改已应用") }
+  var chooseExportLocation: String { text("Choose Location…", "选择保存位置…") }
+  var openSettings: String { text("Settings", "设置") }
+  var aiSettingsTitle: String { text("AI Generation", "AI 生成") }
+  var aiConfigureInSettings: String {
+    text("Configure your provider and API key in Settings (⌘,).", "请在设置（⌘,）中配置提供方与 API Key。")
+  }
+  var aiMissingAPIKeyHint: String {
+    text("API key missing. Open Settings to add one.", "缺少 API Key，请打开设置进行配置。")
+  }
   var previewActive: String { text("Previewing", "预览中") }
   var previewActiveHint: String {
     text("Showing rendered preview. Exit preview to keep editing.", "正在显示渲染预览。退出预览后可继续编辑。")
@@ -424,6 +431,13 @@ struct LibraryView: View {
           Label(language.exportSelected, systemImage: "square.and.arrow.up")
         }
         .disabled(selectedAssetIDs.isEmpty)
+      }
+      ToolbarItem {
+        Button {
+          NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } label: {
+          Label(language.openSettings, systemImage: "gearshape")
+        }
       }
       ToolbarItem {
         Picker("Language", selection: $languageRawValue) {
@@ -1326,30 +1340,32 @@ private struct AssetPreviewPanel: View {
           }
           .pickerStyle(.segmented)
 
-          switch sidebarTab {
-          case .inspector:
-            detailRow(language.format, details.format)
-            detailRow(language.dimensions, details.dimensions)
-            detailRow(language.size, details.fileSize)
-            pathRow(details.path)
-          case .lineage:
-            LineageView(graph: lineageGraph, language: language)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
-          case .ai:
-            AIGenerationPanel(
-              asset: asset,
-              language: language,
-              onGenerated: onAIGenerated
-            )
+          ScrollView {
+            switch sidebarTab {
+            case .inspector:
+              VStack(alignment: .leading, spacing: 10) {
+                detailRow(language.format, details.format)
+                detailRow(language.dimensions, details.dimensions)
+                detailRow(language.size, details.fileSize)
+                pathRow(details.path)
+              }
+            case .lineage:
+              LineageView(graph: lineageGraph, language: language)
+                .frame(maxWidth: .infinity, minHeight: 320)
+            case .ai:
+              AIGenerationPanel(
+                asset: asset,
+                language: language,
+                onGenerated: onAIGenerated
+              )
+            }
           }
-
-          Spacer()
         }
         .padding(18)
-        .frame(width: 320)
+        .frame(minWidth: 360, idealWidth: 380)
       }
     }
-    .frame(minWidth: 1_080, minHeight: 680)
+    .frame(minWidth: 1_120, minHeight: 680)
     .task(id: asset.id) {
       lineageGraph = await lineageProvider()
     }
