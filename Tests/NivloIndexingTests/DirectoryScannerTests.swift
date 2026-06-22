@@ -218,6 +218,51 @@ struct DirectoryScannerTests {
     #expect(summary.removedCount == 0)
     #expect(assets.map(\.filename).sorted() == ["hidden.png", "visible.png"])
   }
+
+  @Test("indexes supported videos as visual assets")
+  func indexesSupportedVideos() async throws {
+    let fixture = try TemporaryDirectory()
+    let videoURL = fixture.url.appending(path: "clip.mov")
+    let textURL = fixture.url.appending(path: "notes.txt")
+    try Data().write(to: videoURL)
+    try Data().write(to: textURL)
+    let repository = InMemoryAssetRepository()
+    let scanner = DirectoryScanner(
+      repository: repository,
+      contentLister: DirectoryContentListerStub(
+        result: DirectoryListing(urls: [videoURL, textURL], issueCount: 0)
+      ),
+      resourceReader: FileResourceReaderStub(
+        snapshots: [
+          videoURL: FileResourceSnapshot(
+            isRegularFile: true,
+            contentType: .quickTimeMovie,
+            fileSize: 1_024,
+            createdAt: nil,
+            modifiedAt: nil,
+            fileIdentifier: "video",
+            volumeIdentifier: "volume"
+          ),
+          textURL: FileResourceSnapshot(
+            isRegularFile: true,
+            contentType: .plainText,
+            fileSize: 128,
+            createdAt: nil,
+            modifiedAt: nil,
+            fileIdentifier: "text",
+            volumeIdentifier: "volume"
+          ),
+        ]
+      )
+    )
+
+    let summary = try await scanner.scan(rootURL: fixture.url)
+    let assets = await repository.assets()
+
+    #expect(summary.discoveredCount == 1)
+    #expect(summary.skippedCount == 1)
+    #expect(assets.map(\.filename) == ["clip.mov"])
+  }
 }
 
 private struct DirectoryContentListerStub: DirectoryContentListing {

@@ -117,6 +117,46 @@ public actor SQLiteAssetRepository:
     return assets
   }
 
+  public func hiddenAssetPaths(in rootURL: URL) throws -> Set<String> {
+    let rootPath = rootURL.standardizedFileURL.path
+    let sql = """
+      SELECT path
+      FROM hidden_assets
+      WHERE path = ? OR path LIKE ? ESCAPE char(92);
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(rootPath, at: 1, to: statement, sql: sql)
+    try bind("\(escapeLikePattern(rootPath))/%", at: 2, to: statement, sql: sql)
+
+    var paths: Set<String> = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      paths.insert(text(at: 0, from: statement))
+    }
+    try requireFinished(statement, sql: sql)
+    return paths
+  }
+
+  public func hideAsset(_ asset: ImageAsset) throws {
+    let sql = """
+      INSERT OR REPLACE INTO hidden_assets(path, hidden_at)
+      VALUES (?, ?);
+      """
+    try execute("BEGIN IMMEDIATE TRANSACTION;")
+    do {
+      let statement = try prepare(sql)
+      defer { sqlite3_finalize(statement) }
+      try bind(asset.url.standardizedFileURL.path, at: 1, to: statement, sql: sql)
+      sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+      try stepToCompletion(statement, sql: sql)
+      try deleteAssets(Set([asset.id]))
+      try execute("COMMIT;")
+    } catch {
+      try? execute("ROLLBACK;")
+      throw error
+    }
+  }
+
   public func replaceAssets(
     in rootURL: URL,
     with assets: [ImageAsset]
@@ -129,16 +169,17 @@ public actor SQLiteAssetRepository:
     under rootURL: URL,
     with assets: [ImageAsset]
   ) throws -> Int {
+    let visibleAssets = try filterHiddenAssets(assets, in: rootURL)
     let scopePath = scopeURL.standardizedFileURL.path
     let rootPath = rootURL.standardizedFileURL.path
     try execute("BEGIN IMMEDIATE TRANSACTION;")
     do {
       let existingIDs = try assetIDs(inScopePath: scopePath, rootPath: rootPath)
-      let replacementIDs = Set(assets.map(\.id))
+      let replacementIDs = Set(visibleAssets.map(\.id))
       let removedIDs = existingIDs.subtracting(replacementIDs)
       try deleteAssets(removedIDs)
-      try writeAssets(assets, rootPath: rootPath)
-      try upsertSearchAssets(assets)
+      try writeAssets(visibleAssets, rootPath: rootPath)
+      try upsertSearchAssets(visibleAssets)
       try execute("COMMIT;")
       return removedIDs.count
     } catch {
@@ -151,13 +192,14 @@ public actor SQLiteAssetRepository:
     _ assets: [ImageAsset],
     in rootURL: URL
   ) throws {
+    let visibleAssets = try filterHiddenAssets(assets, in: rootURL)
     try execute("BEGIN IMMEDIATE TRANSACTION;")
     do {
       try writeAssets(
-        assets,
+        visibleAssets,
         rootPath: rootURL.standardizedFileURL.path
       )
-      try upsertSearchAssets(assets)
+      try upsertSearchAssets(visibleAssets)
       try execute("COMMIT;")
     } catch {
       try? execute("ROLLBACK;")
@@ -459,6 +501,17 @@ public actor SQLiteAssetRepository:
       .replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "%", with: "\\%")
       .replacingOccurrences(of: "_", with: "\\_")
+  }
+
+  private func filterHiddenAssets(
+    _ assets: [ImageAsset],
+    in rootURL: URL
+  ) throws -> [ImageAsset] {
+    let hiddenPaths = try hiddenAssetPaths(in: rootURL)
+    guard !hiddenPaths.isEmpty else {
+      return assets
+    }
+    return assets.filter { !hiddenPaths.contains($0.url.standardizedFileURL.path) }
   }
 
   private func deleteAssets(_ identities: Set<AssetID>) throws {
@@ -889,6 +942,11 @@ public actor SQLiteAssetRepository:
         CREATE INDEX IF NOT EXISTS assets_root_path_idx
         ON assets(root_path);
 
+        CREATE TABLE IF NOT EXISTS hidden_assets (
+            path TEXT PRIMARY KEY,
+            hidden_at REAL NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS library_roots (
             id TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
@@ -949,6 +1007,7 @@ public actor SQLiteAssetRepository:
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
         """
     )
   }

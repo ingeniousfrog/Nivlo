@@ -4,6 +4,123 @@ import NivloIndexing
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum NivloLanguage: String, CaseIterable, Identifiable {
+  case english
+  case simplifiedChinese
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .english:
+      "English"
+    case .simplifiedChinese:
+      "简体中文"
+    }
+  }
+
+  var addFolder: String { text("Add Folder", "添加文件夹") }
+  var allImages: String { text("All Images", "全部图片") }
+  var cancel: String { text("Cancel", "取消") }
+  var delete: String { text("Delete", "删除") }
+  var deleteHelp: String {
+    text("Hide from Nivlo without deleting the original file", "从 Nivlo 隐藏，但不删除原文件")
+  }
+  var dimensions: String { text("Dimensions", "尺寸") }
+  var duplicates: String { text("Duplicates", "重复项") }
+  var edit: String { text("Edit", "编辑") }
+  var editHelp: String { text("Open this asset for editing", "打开此素材进行编辑") }
+  var emptyLibraryDescription: String {
+    text(
+      "Add a folder. Nivlo indexes images in place and never uploads the originals.",
+      "添加文件夹后，Nivlo 会就地索引图片，不移动、不上传原文件。"
+    )
+  }
+  var emptyLibraryTitle: String { text("Your visual library starts here", "从这里开始建立视觉素材库") }
+  var export: String { text("Export", "导出") }
+  var exportAsset: String { text("Export image", "导出图片") }
+  var exportSelected: String { text("Export Selected", "导出所选") }
+  var filter: String { text("Filter", "筛选") }
+  var finder: String { text("Finder", "访达") }
+  var folders: String { text("Folders", "文件夹") }
+  var format: String { text("Format", "格式") }
+  var hide: String { text("Hide", "隐藏") }
+  var hideAssetTitle: String { text("Hide asset from Nivlo?", "从 Nivlo 隐藏这个素材？") }
+  var inspector: String { text("Inspector", "信息") }
+  var library: String { text("Library", "图库") }
+  var noMatchingDescription: String {
+    text(
+      "Try a different filename, path, OCR text, or keyword.",
+      "试试其他文件名、路径、OCR 文本或关键词。"
+    )
+  }
+  var noMatchingImages: String { text("No Matching Images", "没有匹配图片") }
+  var noSmartViewDescription: String {
+    text(
+      "Nivlo will show matching indexed images here.",
+      "Nivlo 会在这里显示匹配的已索引图片。"
+    )
+  }
+  var path: String { text("Path", "路径") }
+  var remove: String { text("Remove", "移除") }
+  var removeFolderTitle: String { text("Remove folder from Nivlo?", "从 Nivlo 移除此文件夹？") }
+  var removeFromSelection: String { text("Remove from export selection", "从导出选择中移除") }
+  var searchPrompt: String { text("Search filename, path, OCR, keywords", "搜索文件名、路径、OCR、关键词") }
+  var select: String { text("Select", "选择") }
+  var selected: String { text("Selected", "已选择") }
+  var selectForExport: String { text("Select for export", "选择用于导出") }
+  var showInFinder: String { text("Show in Finder", "在访达中显示") }
+  var similar: String { text("Similar", "相似图片") }
+  var size: String { text("Size", "大小") }
+  var smartViews: String { text("Smart Views", "智能视图") }
+  var spotlightDiscovery: String { text("Mac Spotlight Discovery", "Mac Spotlight 发现") }
+  var status: String { text("Status", "状态") }
+  var validateIndex: String { text("Validate Index", "校验索引") }
+  var copyPath: String { text("Copy path", "复制路径") }
+
+  func hideAssetMessage(_ filename: String) -> String {
+    text(
+      "Nivlo will hide \(filename) from this app and keep the original file untouched in Finder.",
+      "Nivlo 会在本应用中隐藏 \(filename)，但不会修改或删除访达中的原文件。"
+    )
+  }
+
+  func noSmartViewTitle(_ smartView: SmartAssetView) -> String {
+    text("No \(smartView.title)", "没有\(smartViewTitle(smartView))")
+  }
+
+  func removeFolderMessage(_ folderName: String) -> String {
+    text(
+      "Nivlo will remove \(folderName) from the local index and stop watching it. Original files stay untouched in Finder.",
+      "Nivlo 会从本地索引中移除 \(folderName) 并停止监听。访达中的原文件不会被修改或删除。"
+    )
+  }
+
+  func smartViewTitle(_ smartView: SmartAssetView) -> String {
+    switch (self, smartView) {
+    case (.english, _):
+      smartView.title
+    case (.simplifiedChinese, .screenshots):
+      "截图"
+    case (.simplifiedChinese, .recentDownloads):
+      "最近下载"
+    case (.simplifiedChinese, .recentlyModified):
+      "最近修改"
+    case (.simplifiedChinese, .largeFiles):
+      "大文件"
+    }
+  }
+
+  private func text(_ english: String, _ chinese: String) -> String {
+    switch self {
+    case .english:
+      english
+    case .simplifiedChinese:
+      chinese
+    }
+  }
+}
+
 struct LibraryView: View {
   private enum SectionSelection: Hashable {
     case allImages
@@ -18,6 +135,7 @@ struct LibraryView: View {
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
   @State private var previewAsset: ImageAsset?
+  @State private var assetPendingRemoval: ImageAsset?
   @State private var folderPendingRemoval: LibraryRoot?
   @State private var folderFilter: String?
   @State private var sourceFilter: AssetSource?
@@ -26,6 +144,12 @@ struct LibraryView: View {
   @State private var sizeFilter: SizeFilter = .all
   @State private var dimensionFilter: DimensionFilter = .all
   @State private var sortOption: SortOption = .path
+  @AppStorage("nivlo.language") private var languageRawValue =
+    NivloLanguage.english.rawValue
+
+  private var language: NivloLanguage {
+    NivloLanguage(rawValue: languageRawValue) ?? .english
+  }
 
   private let columns = [
     GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 16)
@@ -42,7 +166,7 @@ struct LibraryView: View {
         Button {
           chooseFolderToIndex()
         } label: {
-          Label("Add Folder", systemImage: "folder.badge.plus")
+          Label(language.addFolder, systemImage: "folder.badge.plus")
         }
       }
       ToolbarItem {
@@ -85,22 +209,30 @@ struct LibraryView: View {
             }
           }
         } label: {
-          Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+          Label(language.filter, systemImage: "line.3.horizontal.decrease.circle")
         }
       }
       ToolbarItem {
         Button {
           chooseExportFolder()
         } label: {
-          Label("Export Selected", systemImage: "square.and.arrow.up")
+          Label(language.exportSelected, systemImage: "square.and.arrow.up")
         }
         .disabled(selectedAssetIDs.isEmpty)
+      }
+      ToolbarItem {
+        Picker("Language", selection: $languageRawValue) {
+          ForEach(NivloLanguage.allCases) { language in
+            Text(language.displayName).tag(language.rawValue)
+          }
+        }
+        .pickerStyle(.menu)
       }
     }
     .searchable(
       text: $searchText,
       placement: .toolbar,
-      prompt: "Search filename, path, OCR, keywords"
+      prompt: Text(language.searchPrompt)
     )
     .task {
       await model.loadLibrary()
@@ -127,17 +259,47 @@ struct LibraryView: View {
       AssetPreviewPanel(
         asset: asset,
         enrichment: model.enrichments[asset.id],
+        language: language,
         isSelected: selectedAssetIDs.contains(asset.id),
         onToggleSelection: {
           toggleSelection(asset.id)
         },
         onExport: {
           chooseExportFolder(assetIDs: [asset.id])
+        },
+        onEdit: {
+          NSWorkspace.shared.open(asset.url)
+        },
+        onDelete: {
+          assetPendingRemoval = asset
         }
       )
     }
     .alert(
-      "Remove folder from Nivlo?",
+      language.hideAssetTitle,
+      isPresented: Binding(
+        get: { assetPendingRemoval != nil },
+        set: { isPresented in
+          if !isPresented {
+            assetPendingRemoval = nil
+          }
+        }
+      ),
+      presenting: assetPendingRemoval
+    ) { asset in
+      Button(language.hide, role: .destructive) {
+        hideAsset(asset)
+      }
+      Button(language.cancel, role: .cancel) {
+        assetPendingRemoval = nil
+      }
+    } message: { asset in
+      Text(
+        language.hideAssetMessage(asset.filename)
+      )
+    }
+    .alert(
+      language.removeFolderTitle,
       isPresented: Binding(
         get: { folderPendingRemoval != nil },
         set: { isPresented in
@@ -148,42 +310,67 @@ struct LibraryView: View {
       ),
       presenting: folderPendingRemoval
     ) { root in
-      Button("Remove", role: .destructive) {
+      Button(language.remove, role: .destructive) {
         removeFolder(root)
       }
-      Button("Cancel", role: .cancel) {
+      Button(language.cancel, role: .cancel) {
         folderPendingRemoval = nil
       }
     } message: { root in
       Text(
-        "Nivlo will remove \(root.displayName) from the local index and stop watching it. Original files stay untouched in Finder."
+        language.removeFolderMessage(root.displayName)
       )
     }
   }
 
   private var sidebar: some View {
     List(selection: $selection) {
-      Section("Library") {
-        Label("All Images", systemImage: "photo.on.rectangle.angled")
+      Section(language.library) {
+        Label(language.allImages, systemImage: "photo.on.rectangle.angled")
           .badge(model.assets.count)
           .tag(SectionSelection.allImages)
-        Label("Mac Spotlight Discovery", systemImage: "sparkle.magnifyingglass")
+        Label(language.spotlightDiscovery, systemImage: "sparkle.magnifyingglass")
           .badge(model.spotlightCandidates.count)
           .tag(SectionSelection.spotlight)
-        Label("Duplicates", systemImage: "square.on.square")
+        Label(language.duplicates, systemImage: "square.on.square")
           .badge(model.duplicateGroups.count)
           .tag(SectionSelection.duplicates)
-        Label("Similar", systemImage: "circle.grid.cross")
+        Label(language.similar, systemImage: "circle.grid.cross")
           .badge(model.similarGroups.count)
           .tag(SectionSelection.similar)
       }
-      Section("Smart Views") {
+      Section(language.smartViews) {
         smartViewRow(.screenshots, systemImage: "camera.viewfinder")
         smartViewRow(.recentDownloads, systemImage: "arrow.down.circle")
         smartViewRow(.recentlyModified, systemImage: "clock.arrow.circlepath")
         smartViewRow(.largeFiles, systemImage: "externaldrive.badge.icloud")
       }
-      Section("Status") {
+      if !model.roots.isEmpty {
+        Section(language.folders) {
+          Button {
+            Task {
+              await model.validateLibraryNow()
+            }
+          } label: {
+            Label(language.validateIndex, systemImage: "checkmark.shield")
+          }
+          .buttonStyle(.plain)
+          ForEach(model.roots) { root in
+            FolderSidebarRow(
+              root: root,
+              onRescan: {
+                Task {
+                  await model.rescan(root)
+                }
+              },
+              onRemove: {
+                folderPendingRemoval = root
+              }
+            )
+          }
+        }
+      }
+      Section(language.status) {
         Label(
           model.statusMessage,
           systemImage: model.isScanning
@@ -211,31 +398,6 @@ struct LibraryView: View {
           systemImage: "square.and.arrow.up"
         )
       }
-      if !model.roots.isEmpty {
-        Section("Folders") {
-          Button {
-            Task {
-              await model.validateLibraryNow()
-            }
-          } label: {
-            Label("Validate Index", systemImage: "checkmark.shield")
-          }
-          .buttonStyle(.plain)
-          ForEach(model.roots) { root in
-            FolderSidebarRow(
-              root: root,
-              onRescan: {
-                Task {
-                  await model.rescan(root)
-                }
-              },
-              onRemove: {
-                folderPendingRemoval = root
-              }
-            )
-          }
-        }
-      }
     }
     .navigationSplitViewColumnWidth(min: 210, ideal: 240)
   }
@@ -244,7 +406,7 @@ struct LibraryView: View {
     _ smartView: SmartAssetView,
     systemImage: String
   ) -> some View {
-    Label(smartView.title, systemImage: systemImage)
+    Label(language.smartViewTitle(smartView), systemImage: systemImage)
       .badge(model.smartAssets(smartView, query: AssetQuery()).count)
       .tag(SectionSelection.smart(smartView))
   }
@@ -270,28 +432,28 @@ struct LibraryView: View {
       )
     } else if case .smart(let smartView) = selection {
       assetGridContent(
-        title: smartView.title,
+        title: language.smartViewTitle(smartView),
         assets: model.smartAssets(smartView, query: currentQuery),
-        emptyTitle: "No \(smartView.title)",
-        emptyDescription: "Nivlo will show matching indexed images here."
+        emptyTitle: language.noSmartViewTitle(smartView),
+        emptyDescription: language.noSmartViewDescription
       )
     } else if model.assets.isEmpty {
       ContentUnavailableView {
-        Label("Your visual library starts here", systemImage: "photo.stack")
+        Label(language.emptyLibraryTitle, systemImage: "photo.stack")
       } description: {
-        Text("Add a folder. Nivlo indexes images in place and never uploads the originals.")
+        Text(language.emptyLibraryDescription)
       } actions: {
-        Button("Add Folder") {
+        Button(language.addFolder) {
           chooseFolderToIndex()
         }
         .buttonStyle(.borderedProminent)
       }
     } else {
       assetGridContent(
-        title: "All Images",
+        title: language.allImages,
         assets: model.filteredAssets(query: currentQuery),
-        emptyTitle: "No Matching Images",
-        emptyDescription: "Try a different filename, path, OCR text, or keyword."
+        emptyTitle: language.noMatchingImages,
+        emptyDescription: language.noMatchingDescription
       )
     }
   }
@@ -383,6 +545,17 @@ struct LibraryView: View {
     folderPendingRemoval = nil
     Task {
       await model.removeFolder(root)
+    }
+  }
+
+  private func hideAsset(_ asset: ImageAsset) {
+    selectedAssetIDs.remove(asset.id)
+    if previewAsset?.id == asset.id {
+      previewAsset = nil
+    }
+    assetPendingRemoval = nil
+    Task {
+      await model.hideAsset(asset)
     }
   }
 
@@ -706,9 +879,6 @@ private struct AssetCard: View {
       Button("Copy Path") {
         AssetClipboard.copyPath(asset.url)
       }
-      Button("Copy Markdown Image") {
-        AssetClipboard.copyMarkdownImage(asset)
-      }
     }
   }
 
@@ -725,9 +895,12 @@ private struct AssetCard: View {
 private struct AssetPreviewPanel: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
+  let language: NivloLanguage
   let isSelected: Bool
   let onToggleSelection: () -> Void
   let onExport: () -> Void
+  let onEdit: () -> Void
+  let onDelete: () -> Void
 
   @Environment(\.dismiss) private var dismiss
 
@@ -751,9 +924,12 @@ private struct AssetPreviewPanel: View {
 
         AssetPreviewToolbar(
           asset: asset,
+          language: language,
           isSelected: isSelected,
           onToggleSelection: onToggleSelection,
-          onExport: onExport
+          onExport: onExport,
+          onEdit: onEdit,
+          onDelete: onDelete
         )
 
         Button {
@@ -786,12 +962,12 @@ private struct AssetPreviewPanel: View {
         Divider()
 
         VStack(alignment: .leading, spacing: 14) {
-          Text("Inspector")
+          Text(language.inspector)
             .font(.headline)
-          detailRow("Format", details.format)
-          detailRow("Dimensions", details.dimensions)
-          detailRow("Size", details.fileSize)
-          detailRow("Path", details.path)
+          detailRow(language.format, details.format)
+          detailRow(language.dimensions, details.dimensions)
+          detailRow(language.size, details.fileSize)
+          pathRow(details.path)
 
           Spacer()
         }
@@ -813,51 +989,77 @@ private struct AssetPreviewPanel: View {
         .lineLimit(label == "Path" ? 3 : 1)
     }
   }
+
+  private func pathRow(_ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(language.path)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+      HStack(alignment: .top, spacing: 6) {
+        Text(value)
+          .font(.callout)
+          .textSelection(.enabled)
+          .lineLimit(4)
+        Button {
+          AssetClipboard.copyPath(asset.url)
+        } label: {
+          Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .help(language.copyPath)
+      }
+    }
+  }
 }
 
 private struct AssetPreviewToolbar: View {
   let asset: ImageAsset
+  let language: NivloLanguage
   let isSelected: Bool
   let onToggleSelection: () -> Void
   let onExport: () -> Void
+  let onEdit: () -> Void
+  let onDelete: () -> Void
 
   var body: some View {
     HStack(spacing: 8) {
       Button {
+        onEdit()
+      } label: {
+        Label(language.edit, systemImage: "slider.horizontal.3")
+      }
+      .help(language.editHelp)
+
+      Button {
         NSWorkspace.shared.activateFileViewerSelecting([asset.url])
       } label: {
-        Label("Finder", systemImage: "finder")
+        Label(language.finder, systemImage: "finder")
       }
-      .help("Show in Finder")
+      .help(language.showInFinder)
 
       Button {
         onExport()
       } label: {
-        Label("Export", systemImage: "square.and.arrow.up")
+        Label(language.export, systemImage: "square.and.arrow.up")
       }
-      .help("Export image")
+      .help(language.exportAsset)
 
       Button {
         onToggleSelection()
       } label: {
         Label(
-          isSelected ? "Selected" : "Select",
+          isSelected ? language.selected : language.select,
           systemImage: isSelected ? "checkmark.circle.fill" : "circle"
         )
       }
-      .help(isSelected ? "Remove from export selection" : "Select for export")
+      .help(isSelected ? language.removeFromSelection : language.selectForExport)
 
-      Menu {
-        Button("Copy Path") {
-          AssetClipboard.copyPath(asset.url)
-        }
-        Button("Copy Markdown Image") {
-          AssetClipboard.copyMarkdownImage(asset)
-        }
+      Button(role: .destructive) {
+        onDelete()
       } label: {
-        Label("Copy", systemImage: "doc.on.doc")
+        Label(language.delete, systemImage: "trash")
       }
-      .help("Copy path or Markdown image reference")
+      .help(language.deleteHelp)
     }
     .buttonStyle(.bordered)
   }
@@ -869,15 +1071,6 @@ private enum AssetClipboard {
     NSPasteboard.general.setString(url.standardizedFileURL.path, forType: .string)
   }
 
-  static func copyMarkdownImage(_ asset: ImageAsset) {
-    let altText = asset.filename
-      .replacingOccurrences(of: "[", with: "\\[")
-      .replacingOccurrences(of: "]", with: "\\]")
-    let path = asset.url.standardizedFileURL.path
-      .replacingOccurrences(of: ">", with: "%3E")
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("![\(altText)](<\(path)>)", forType: .string)
-  }
 }
 
 extension URL {

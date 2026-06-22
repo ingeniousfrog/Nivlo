@@ -3,6 +3,7 @@ import NivloDomain
 import NivloImaging
 import NivloIndexing
 import NivloPersistence
+import UniformTypeIdentifiers
 
 @MainActor
 final class LibraryModel: ObservableObject {
@@ -224,6 +225,23 @@ final class LibraryModel: ObservableObject {
     }
   }
 
+  func hideAsset(_ asset: ImageAsset) async {
+    errorMessage = nil
+    do {
+      try await repository.hideAsset(asset)
+      assets = try await repository.assets()
+      enrichments = Dictionary(
+        uniqueKeysWithValues: try await repository.enrichments()
+          .map { ($0.assetID, $0) }
+      )
+      updateSimilarityGroups()
+      statusMessage = "\(assets.count) images indexed · hidden \(asset.filename)"
+    } catch {
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn’t hide asset"
+    }
+  }
+
   func validateLibraryNow() async {
     validationStatusMessage = "Validating indexed folders…"
     do {
@@ -308,9 +326,10 @@ final class LibraryModel: ObservableObject {
     do {
       let activeRoots = await rootAccessManager.activeURLs()
       let accessibleAssets = assets.filter { asset in
-        activeRoots.contains { root in
-          asset.url.isContained(in: root)
-        }
+        asset.isRasterImage
+          && activeRoots.contains { root in
+            asset.url.isContained(in: root)
+          }
       }
       let summary = try await enrichmentPipeline.enrich(accessibleAssets)
       enrichments = Dictionary(
@@ -429,6 +448,12 @@ extension URL {
     let rootPath = rootURL.standardizedFileURL.path
     return candidatePath == rootPath
       || candidatePath.hasPrefix(rootPath + "/")
+  }
+}
+
+extension ImageAsset {
+  fileprivate var isRasterImage: Bool {
+    UTType(contentType)?.conforms(to: .image) == true
   }
 }
 

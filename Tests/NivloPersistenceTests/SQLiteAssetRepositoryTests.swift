@@ -191,6 +191,27 @@ struct SQLiteAssetRepositoryTests {
 
     #expect(results.isEmpty)
   }
+
+  @Test("hidden assets stay out of the index after rescans")
+  func hiddenAssetsStayOutOfIndex() async throws {
+    let repository = try SQLiteAssetRepository(databaseURL: temporaryDatabaseURL())
+    let rootURL = URL(filePath: "/tmp/nivlo-library")
+    let hidden = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-hidden"),
+      url: rootURL.appending(path: "hidden.png")
+    )
+    let visible = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-visible"),
+      url: rootURL.appending(path: "visible.png")
+    )
+    _ = try await repository.replaceAssets(in: rootURL, with: [hidden, visible])
+
+    try await repository.hideAsset(hidden)
+    _ = try await repository.replaceAssets(in: rootURL, with: [hidden, visible])
+
+    #expect(try await repository.assets() == [visible])
+    #expect(try await repository.hiddenAssetPaths(in: rootURL) == Set([hidden.url.path]))
+  }
 }
 
 private func temporaryDatabaseURL() -> URL {

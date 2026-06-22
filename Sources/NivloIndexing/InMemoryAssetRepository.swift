@@ -6,6 +6,7 @@ public actor InMemoryAssetRepository:
   ProcessingHistoryRepository
 {
   private var storedAssets: [AssetID: ImageAsset]
+  private var hiddenPaths: Set<String> = []
   private var storedEnrichments: [AssetID: AssetEnrichment] = [:]
   private var storedRoots: [UUID: LibraryRoot] = [:]
   private var storedProcessingHistory: [AssetID: [ProcessingHistoryRecord]] = [:]
@@ -23,10 +24,22 @@ public actor InMemoryAssetRepository:
       .apply(to: assets(), enrichments: storedEnrichments)
   }
 
+  public func hiddenAssetPaths(in rootURL: URL) -> Set<String> {
+    let rootURL = rootURL.standardizedFileURL
+    return hiddenPaths.filter { URL(filePath: $0).isContained(in: rootURL) }
+  }
+
+  public func hideAsset(_ asset: ImageAsset) {
+    hiddenPaths.insert(asset.url.standardizedFileURL.path)
+    storedAssets[asset.id] = nil
+    storedEnrichments[asset.id] = nil
+  }
+
   public func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) {
-    invalidateChangedEnrichments(for: assets)
+    let visibleAssets = assets.filter { !hiddenPaths.contains($0.url.standardizedFileURL.path) }
+    invalidateChangedEnrichments(for: visibleAssets)
     let replacements = Dictionary(
-      uniqueKeysWithValues: assets.map { ($0.id, $0) }
+      uniqueKeysWithValues: visibleAssets.map { ($0.id, $0) }
     )
     storedAssets = storedAssets.merging(replacements) { _, replacement in
       replacement
@@ -46,17 +59,18 @@ public actor InMemoryAssetRepository:
     with assets: [ImageAsset]
   ) -> Int {
     let scopeURL = scopeURL.standardizedFileURL
+    let visibleAssets = assets.filter { !hiddenPaths.contains($0.url.standardizedFileURL.path) }
     let existingIDs = Set(
       storedAssets.values
         .filter { $0.url.isContained(in: scopeURL) }
         .map(\.id)
     )
-    let replacementIDs = Set(assets.map(\.id))
+    let replacementIDs = Set(visibleAssets.map(\.id))
     let removedIDs = existingIDs.subtracting(replacementIDs)
-    invalidateChangedEnrichments(for: assets)
+    invalidateChangedEnrichments(for: visibleAssets)
     let retainedAssets = storedAssets.filter { !removedIDs.contains($0.key) }
     let replacements = Dictionary(
-      uniqueKeysWithValues: assets.map { ($0.id, $0) }
+      uniqueKeysWithValues: visibleAssets.map { ($0.id, $0) }
     )
     storedAssets = retainedAssets.merging(replacements) { _, replacement in
       replacement

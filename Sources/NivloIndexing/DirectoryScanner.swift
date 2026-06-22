@@ -156,7 +156,8 @@ public actor DirectoryScanner: DirectoryScanning {
     scopeURL: URL,
     rootURL: URL
   ) async throws -> ScanSummary {
-    let discovery = try discoverImages(in: scopeURL)
+    let hiddenPaths = try await repository.hiddenAssetPaths(in: rootURL)
+    let discovery = try discoverImages(in: scopeURL, hiddenPaths: hiddenPaths)
     let removedCount: Int
     if discovery.issueCount == 0 {
       removedCount = try await repository.replaceAssets(
@@ -182,7 +183,10 @@ public actor DirectoryScanner: DirectoryScanning {
     return values.isDirectory == true
   }
 
-  private func discoverImages(in rootURL: URL) throws -> DiscoveryResult {
+  private func discoverImages(
+    in rootURL: URL,
+    hiddenPaths: Set<String>
+  ) throws -> DiscoveryResult {
     let resourceKeys: [URLResourceKey] = [
       .isDirectoryKey,
       .isRegularFileKey,
@@ -203,6 +207,10 @@ public actor DirectoryScanner: DirectoryScanning {
     var skippedCount = 0
     var issueCount = listing.issueCount
     for fileURL in listing.urls {
+      if hiddenPaths.contains(fileURL.standardizedFileURL.path) {
+        skippedCount += 1
+        continue
+      }
       let snapshot: FileResourceSnapshot
       do {
         snapshot = try resourceReader.snapshot(
@@ -220,7 +228,7 @@ public actor DirectoryScanner: DirectoryScanning {
         issueCount += 1
         continue
       }
-      guard contentType.conforms(to: .image) else {
+      guard contentType.isSupportedVisualAsset else {
         skippedCount += 1
         continue
       }
@@ -229,7 +237,12 @@ public actor DirectoryScanner: DirectoryScanning {
         continue
       }
 
-      let dimensions = imageDimensions(at: fileURL)
+      let dimensions: ImageDimensions?
+      if contentType.conforms(to: .image) {
+        dimensions = imageDimensions(at: fileURL)
+      } else {
+        dimensions = nil
+      }
       assets.append(
         ImageAsset(
           id: identity,
@@ -299,5 +312,11 @@ extension URL {
     let rootPath = rootURL.standardizedFileURL.path
     return candidatePath == rootPath
       || candidatePath.hasPrefix(rootPath + "/")
+  }
+}
+
+extension UTType {
+  fileprivate var isSupportedVisualAsset: Bool {
+    conforms(to: .image) || conforms(to: .movie)
   }
 }

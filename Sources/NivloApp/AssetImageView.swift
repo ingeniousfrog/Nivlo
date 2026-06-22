@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import ImageIO
 import NivloDomain
@@ -93,6 +94,17 @@ private enum AssetImageDataLoader {
       return cachedData
     }
 
+    if let imageData = rasterImageData(sourceURL: sourceURL, maxPixelSize: maxPixelSize) {
+      return imageData
+    }
+
+    return videoPosterData(sourceURL: sourceURL, maxPixelSize: maxPixelSize)
+  }
+
+  private static func rasterImageData(
+    sourceURL: URL,
+    maxPixelSize: Int
+  ) -> Data? {
     guard
       let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
       let thumbnail = CGImageSourceCreateThumbnailAtIndex(
@@ -120,6 +132,41 @@ private enum AssetImageDataLoader {
       return nil
     }
     CGImageDestinationAddImage(destination, thumbnail, nil)
+    guard CGImageDestinationFinalize(destination) else {
+      return nil
+    }
+    return data as Data
+  }
+
+  private static func videoPosterData(
+    sourceURL: URL,
+    maxPixelSize: Int
+  ) -> Data? {
+    let asset = AVURLAsset(url: sourceURL)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+    guard
+      let frame = try? generator.copyCGImage(
+        at: .zero,
+        actualTime: nil
+      )
+    else {
+      return nil
+    }
+
+    let data = NSMutableData()
+    guard
+      let destination = CGImageDestinationCreateWithData(
+        data,
+        "public.jpeg" as CFString,
+        1,
+        nil
+      )
+    else {
+      return nil
+    }
+    CGImageDestinationAddImage(destination, frame, nil)
     guard CGImageDestinationFinalize(destination) else {
       return nil
     }
