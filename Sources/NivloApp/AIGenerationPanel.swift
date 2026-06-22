@@ -40,7 +40,7 @@ struct AIGenerationPanel: View {
           }
         }
       } else {
-        Form {
+        VStack(alignment: .leading, spacing: 14) {
           Picker(language.aiCapability, selection: $capability) {
             ForEach(GenerationCapability.allCases, id: \.self) { item in
               Text(item.rawValue).tag(item)
@@ -65,11 +65,12 @@ struct AIGenerationPanel: View {
             Text(statusMessage)
               .font(.caption)
               .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
-        .formStyle(.grouped)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func generate() {

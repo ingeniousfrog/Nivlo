@@ -15,7 +15,11 @@ public enum PicxProcessorError: Error, LocalizedError, Sendable {
   }
 }
 
-public struct PicxProcessor: Sendable {
+public protocol ImageOptimizing: Sendable {
+  func optimize(_ request: PicxOptimizeRequest) async throws -> PicxOptimizeResult
+}
+
+public struct PicxProcessor: Sendable, ImageOptimizing {
   private let runner: ExternalProcessRunner
   private let picxExecutable: URL?
 
@@ -59,7 +63,7 @@ public struct PicxProcessor: Sendable {
     }
 
     let originalSize = fileSize(at: request.sourceURL)
-  _ = try await runner.run(
+    _ = try await runner.run(
       ExternalProcessRequest(executable: picx, arguments: arguments)
     )
 
@@ -67,7 +71,8 @@ public struct PicxProcessor: Sendable {
       throw PicxProcessorError.outputMissing
     }
     let outputSize = fileSize(at: request.outputURL)
-    let savings = originalSize > 0
+    let savings =
+      originalSize > 0
       ? Double(originalSize - outputSize) / Double(originalSize)
       : 0
     return PicxOptimizeResult(
@@ -86,15 +91,23 @@ public struct PicxProcessor: Sendable {
 }
 
 public struct ImageEditPipeline: Sendable {
-  private let geometryExporter: CoreImageGeometryExporter
-  private let picxProcessor: PicxProcessor
+  private let renderer: any EditedImageRendering
+  private let optimizer: any ImageOptimizing
 
   public init(
-    geometryExporter: CoreImageGeometryExporter = CoreImageGeometryExporter(),
-    picxProcessor: PicxProcessor = PicxProcessor()
+    renderer: any EditedImageRendering = CoreImageGeometryExporter(),
+    optimizer: any ImageOptimizing = PicxProcessor()
   ) {
-    self.geometryExporter = geometryExporter
-    self.picxProcessor = picxProcessor
+    self.renderer = renderer
+    self.optimizer = optimizer
+  }
+
+  public init(
+    geometryExporter: CoreImageGeometryExporter,
+    picxProcessor: PicxProcessor
+  ) {
+    renderer = geometryExporter
+    optimizer = picxProcessor
   }
 
   public func export(_ request: ImageEditRequest) async throws -> PicxOptimizeResult {
@@ -107,19 +120,21 @@ public struct ImageEditPipeline: Sendable {
       .appending(path: "\(UUID().uuidString).png")
     defer { try? fileManager.removeItem(at: tempPNG) }
 
-    try geometryExporter.exportPNG(
+    try renderer.render(
       sourceURL: request.sourceURL,
       outputURL: tempPNG,
-      cropRect: request.cropRect,
-      quarterTurns: request.quarterTurns,
-      flippedHorizontally: request.flippedHorizontally,
-      adjustments: request.adjustments,
-      annotations: request.annotations,
-      maskStrokes: request.maskStrokes,
-      layers: request.layers
+      snapshot: ImageEditSnapshot(
+        cropRect: request.cropRect,
+        quarterTurns: request.quarterTurns,
+        flippedHorizontally: request.flippedHorizontally,
+        adjustments: request.adjustments,
+        annotations: request.annotations,
+        maskStrokes: request.maskStrokes,
+        layers: request.layers
+      )
     )
 
-    return try await picxProcessor.optimize(
+    return try await optimizer.optimize(
       PicxOptimizeRequest(
         sourceURL: tempPNG,
         outputURL: request.outputURL,

@@ -1,8 +1,9 @@
+import Foundation
+import NivloDomain
+
 #if canImport(AppKit)
   import AppKit
 #endif
-import Foundation
-import NivloDomain
 
 public enum ImageEditPreviewRendererError: Error, LocalizedError, Sendable {
   case renderFailed
@@ -16,27 +17,33 @@ public enum ImageEditPreviewRendererError: Error, LocalizedError, Sendable {
 }
 
 public struct ImageEditPreviewRenderer: Sendable {
-  private let exporter = CoreImageGeometryExporter()
+  private let renderer: any EditedImageRendering
+  private let tempDirectory: URL
 
-  public init() {}
+  public init(
+    renderer: any EditedImageRendering = CoreImageGeometryExporter(),
+    tempDirectory: URL = NivloToolsDirectory.tempDirectory()
+  ) {
+    self.renderer = renderer
+    self.tempDirectory = tempDirectory
+  }
 
   public func renderPreview(
     sourceURL: URL,
     snapshot: ImageEditSnapshot
   ) throws -> Data {
-    let tempURL = NivloToolsDirectory.tempDirectory()
+    try FileManager.default.createDirectory(
+      at: tempDirectory,
+      withIntermediateDirectories: true
+    )
+    let tempURL =
+      tempDirectory
       .appending(path: "\(UUID().uuidString)-preview.png")
     defer { try? FileManager.default.removeItem(at: tempURL) }
-    try exporter.exportPNG(
+    try renderer.render(
       sourceURL: sourceURL,
       outputURL: tempURL,
-      cropRect: snapshot.cropRect,
-      quarterTurns: snapshot.quarterTurns,
-      flippedHorizontally: snapshot.flippedHorizontally,
-      adjustments: snapshot.adjustments,
-      annotations: snapshot.annotations,
-      maskStrokes: snapshot.maskStrokes,
-      layers: snapshot.layers
+      snapshot: snapshot
     )
     return try Data(contentsOf: tempURL)
   }

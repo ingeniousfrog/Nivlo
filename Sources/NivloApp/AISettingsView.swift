@@ -25,9 +25,9 @@ struct AISettingsView: View {
       SecureField(language.aiAPIKey, text: $apiKey)
       HStack {
         Button(language.saveAPIKey) {
-          try? APIKeyStore.save(providerID: selectedAdapterID, apiKey: apiKey)
-          statusMessage = language.apiKeySaved
+          saveAPIKey()
         }
+        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         if let statusMessage {
           Text(statusMessage)
             .font(.caption)
@@ -47,6 +47,18 @@ struct AISettingsView: View {
     .onChange(of: selectedAdapterID) { _, newValue in
       apiKey = APIKeyStore.load(providerID: newValue) ?? ""
       statusMessage = nil
+    }
+  }
+
+  private func saveAPIKey() {
+    do {
+      try APIKeyStore.save(
+        providerID: selectedAdapterID,
+        apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      )
+      statusMessage = language.apiKeySaved
+    } catch {
+      statusMessage = error.localizedDescription
     }
   }
 }

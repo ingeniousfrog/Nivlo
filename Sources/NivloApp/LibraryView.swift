@@ -208,18 +208,21 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var saveAPIKey: String { text("Save API key", "保存 API 密钥") }
   var apiKeySaved: String { text("API key saved", "API 密钥已保存") }
   var editorCanvasHint: String {
-    text("Edits are previewed live. Export writes a new file without changing the original.", "编辑会实时预览。导出会写入新文件，不会修改原图。")
+    text(
+      "Choose a tool on the right. Preview renders every active edit; export writes that final result to a new file.",
+      "在右侧选择工具。预览会渲染全部编辑；导出会把最终结果写入新文件。"
+    )
   }
   var editorGeometryHint: String {
     text(
-      "Drag handles or the frame to crop. Preview to render, Revert to undo since last preview.",
-      "拖动手柄或框体进行裁切。Preview 渲染预览，Revert 恢复上次预览前的状态。"
+      "Drag the frame to move the crop, or drag any handle to resize it. Revert restores the image to its opening state.",
+      "拖动框体可移动裁切区域，拖动任一手柄可调整大小。还原会恢复到打开编辑器时的状态。"
     )
   }
   var editorAdjustHint: String {
     text(
-      "Tune sliders, then Preview to check the result. Revert restores the last previewed values.",
-      "调节滑块后 Preview 查看效果。Revert 恢复上次预览时的参数。"
+      "Tune the sliders, then Preview to render all edits together. Revert restores the opening state.",
+      "调节滑块后点击预览，统一渲染全部编辑。还原会恢复到打开时的状态。"
     )
   }
   var maskBrushHint: String {
@@ -231,6 +234,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var maskBrushSize: String { text("Brush size", "画笔大小") }
   var previewChanges: String { text("Preview", "预览") }
   var revertChanges: String { text("Revert", "还原") }
+  var editorTools: String { text("Tools", "工具") }
   var chooseExportLocation: String { text("Choose Location…", "选择保存位置…") }
   var openSettings: String { text("Settings", "设置") }
   var aiSettingsTitle: String { text("AI Generation", "AI 生成") }
@@ -259,7 +263,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
     )
   }
   var audioExportHint: String {
-    text("Choose Export → Extract audio only, then pick a save location.", "在「导出」中勾选「仅提取音频」，再选择保存位置。")
+    text(
+      "Choose Export → Extract audio only, then pick a save location.", "在「导出」中勾选「仅提取音频」，再选择保存位置。")
   }
   var videoExportHint: String {
     text("Trim, transform, and export settings apply to a new output file.", "裁剪、形变与导出设置会写入新的输出文件。")
@@ -1264,7 +1269,8 @@ private struct AssetPreviewPanel: View {
   @State private var copyFeedback: CopyFeedback?
   @State private var copyFeedbackTask: Task<Void, Never>?
   @State private var sidebarTab: AssetPreviewSidebarTab = .inspector
-  @State private var lineageGraph = AssetLineageGraph(assetID: AssetID(volumeIdentifier: "", fileIdentifier: ""), records: [])
+  @State private var lineageGraph = AssetLineageGraph(
+    assetID: AssetID(volumeIdentifier: "", fileIdentifier: ""), records: [])
 
   private var details: AssetPreviewDetails {
     AssetPreviewDetails(asset: asset)
@@ -1360,9 +1366,11 @@ private struct AssetPreviewPanel: View {
               )
             }
           }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(18)
-        .frame(minWidth: 360, idealWidth: 380)
+        .frame(width: 380)
+        .clipped()
       }
     }
     .frame(minWidth: 1_120, minHeight: 680)

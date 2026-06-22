@@ -31,10 +31,8 @@ private enum ImageEditorTool: String, CaseIterable, Identifiable {
   }
 }
 
-private extension ImageEditSnapshot {
-  static let defaultInitial = ImageEditSnapshot(
-    cropRect: NormalizedCropRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
-  )
+extension ImageEditSnapshot {
+  fileprivate static let defaultInitial = ImageEditSnapshot(cropRect: .full)
 }
 
 struct AssetEditorView: View {
@@ -45,8 +43,9 @@ struct AssetEditorView: View {
 
   @Environment(\.dismiss) private var dismiss
   @State private var selectedTool: ImageEditorTool = .geometry
-  @State private var editSnapshot = ImageEditSnapshot.defaultInitial
-  @State private var checkpointSnapshot = ImageEditSnapshot.defaultInitial
+  @State private var editSession = ImageEditSession(
+    initialSnapshot: ImageEditSnapshot.defaultInitial
+  )
   @State private var currentMaskStroke: MaskStroke?
   @State private var brushRadius = 0.035
   @State private var outputFormat: PicxOutputFormat = .webp
@@ -61,12 +60,17 @@ struct AssetEditorView: View {
   @State private var isPreviewing = false
   @State private var isRenderingPreview = false
   @State private var previewImage: NSImage?
+  @State private var previewTask: Task<Void, Never>?
+  @State private var previewRequestID = UUID()
   @State private var isExportOptionsPresented = false
 
   private let pipeline = ImageEditPipeline()
   private let previewRenderer = ImageEditPreviewRenderer()
-  private let toolRailWidth: CGFloat = 64
-  private let inspectorWidth: CGFloat = 340
+  private let inspectorWidth: CGFloat = 360
+
+  private var editSnapshot: ImageEditSnapshot {
+    editSession.currentSnapshot
+  }
 
   private var canEdit: Bool {
     UTType(asset.contentType)?.conforms(to: .image) == true
@@ -77,8 +81,6 @@ struct AssetEditorView: View {
       toolbar
       Divider()
       HStack(spacing: 0) {
-        toolRail
-        Divider()
         editorCanvas
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         Divider()
@@ -87,11 +89,9 @@ struct AssetEditorView: View {
       }
       statusBar
     }
-    .frame(minWidth: 1_160, minHeight: 780)
-    .onChange(of: selectedTool) { _, _ in
-      if !isPreviewing {
-        previewImage = nil
-      }
+    .frame(minWidth: 1_080, minHeight: 760)
+    .onDisappear {
+      previewTask?.cancel()
     }
   }
 
@@ -143,7 +143,9 @@ struct AssetEditorView: View {
         .frame(width: 320)
         .padding(12)
       }
-      Button { dismiss() } label: {
+      Button {
+        dismiss()
+      } label: {
         Image(systemName: "xmark")
       }
       .buttonStyle(.bordered)
@@ -151,24 +153,6 @@ struct AssetEditorView: View {
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 14)
-  }
-
-  private var toolRail: some View {
-    List(selection: $selectedTool) {
-      ForEach(ImageEditorTool.allCases) { tool in
-        Label {
-          EmptyView()
-        } icon: {
-          Image(systemName: tool.icon)
-            .font(.title3)
-            .frame(maxWidth: .infinity)
-        }
-        .tag(tool)
-        .help(tool.title(language: language))
-      }
-    }
-    .listStyle(.sidebar)
-    .frame(width: toolRailWidth)
   }
 
   private var imageAspectSize: CGSize {
@@ -205,45 +189,9 @@ struct AssetEditorView: View {
               .padding(24)
               .frame(maxWidth: proxy.size.width, maxHeight: proxy.size.height)
           } else {
-            ZStack {
-              AssetImageView(
-                asset: asset,
-                enrichment: nil,
-                maxPixelSize: 1_800,
-                contentMode: .fit
-              )
-              .frame(width: layout.contentRect.width, height: layout.contentRect.height)
-              .rotationEffect(.degrees(Double(editSnapshot.quarterTurns * 90)))
-              .scaleEffect(x: editSnapshot.flippedHorizontally ? -1 : 1, y: 1)
-              .overlay {
-                if selectedTool == .geometry {
-                  InteractiveCropOverlay(
-                    cropRect: snapshotBinding(\.cropRect),
-                    contentRect: CGRect(origin: .zero, size: layout.contentRect.size)
-                  )
-                }
-                if selectedTool == .mask {
-                  MaskBrushOverlay(
-                    strokes: editSnapshot.maskStrokes,
-                    currentStroke: currentMaskStroke,
-                    brushRadius: brushRadius
-                  )
-                  .allowsHitTesting(false)
-                }
-              }
-              .overlay {
-                if selectedTool == .mask, !isPreviewing {
-                  MaskPaintingSurface(
-                    maskStrokes: snapshotBinding(\.maskStrokes),
-                    currentMaskStroke: $currentMaskStroke,
-                    brushRadius: brushRadius
-                  )
-                }
-              }
-            }
-            .frame(width: layout.contentRect.width, height: layout.contentRect.height)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .padding(24)
+            editableCanvas(size: layout.contentRect.size)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+              .padding(24)
           }
           if isRenderingPreview {
             ProgressView(language.renderingPreview)
@@ -260,12 +208,59 @@ struct AssetEditorView: View {
     }
   }
 
+  private func editableCanvas(size: CGSize) -> some View {
+    let sourceFrameSize =
+      editSnapshot.quarterTurns % 2 == 1
+      ? CGSize(width: size.height, height: size.width)
+      : size
+
+    return ZStack {
+      AssetImageView(
+        asset: asset,
+        enrichment: nil,
+        maxPixelSize: 1_800,
+        contentMode: .fit
+      )
+      .frame(width: sourceFrameSize.width, height: sourceFrameSize.height)
+      .scaleEffect(x: editSnapshot.flippedHorizontally ? -1 : 1, y: 1)
+      .rotationEffect(.degrees(Double(editSnapshot.quarterTurns * 90)))
+    }
+    .frame(width: size.width, height: size.height)
+    .clipped()
+    .background(Color.black.opacity(0.12))
+    .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+    .overlay {
+      if selectedTool == .geometry {
+        InteractiveCropOverlay(cropRect: snapshotBinding(\.cropRect))
+          .frame(width: size.width, height: size.height)
+      }
+      if selectedTool == .mask {
+        MaskBrushOverlay(
+          strokes: editSnapshot.maskStrokes,
+          currentStroke: currentMaskStroke
+        )
+        .frame(width: size.width, height: size.height)
+        MaskPaintingSurface(
+          maskStrokes: snapshotBinding(\.maskStrokes),
+          currentMaskStroke: $currentMaskStroke,
+          brushRadius: brushRadius
+        )
+        .frame(width: size.width, height: size.height)
+      }
+    }
+  }
+
   private var inspector: some View {
     VStack(spacing: 0) {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          Text(selectedTool.title(language: language))
-            .font(.title3.weight(.semibold))
+          toolSelector
+          Divider()
+          Label(
+            selectedTool.title(language: language),
+            systemImage: selectedTool.icon
+          )
+          .font(.title3.weight(.semibold))
 
           switch selectedTool {
           case .geometry:
@@ -288,19 +283,52 @@ struct AssetEditorView: View {
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
+  private var toolSelector: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(language.editorTools)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .textCase(.uppercase)
+
+      LazyVGrid(
+        columns: [
+          GridItem(.flexible(), spacing: 8),
+          GridItem(.flexible(), spacing: 8),
+        ],
+        spacing: 8
+      ) {
+        ForEach(ImageEditorTool.allCases) { tool in
+          Button {
+            selectedTool = tool
+            exitPreview()
+          } label: {
+            Label(tool.title(language: language), systemImage: tool.icon)
+              .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.bordered)
+          .tint(selectedTool == tool ? Color.accentColor : .secondary)
+          .controlSize(.large)
+        }
+      }
+    }
+  }
+
   private var previewRevertButtons: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    HStack(spacing: 10) {
       Button(language.previewChanges) {
         runPreview()
       }
       .buttonStyle(.borderedProminent)
       .disabled(isRenderingPreview)
+      .frame(maxWidth: .infinity)
       Button(language.revertChanges) {
         revertEdits()
       }
       .buttonStyle(.bordered)
+      .disabled(!editSession.hasChanges)
+      .frame(maxWidth: .infinity)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var statusBar: some View {
@@ -373,7 +401,9 @@ struct AssetEditorView: View {
       Button {
         updateSnapshot { $0.flippedHorizontally.toggle() }
       } label: {
-        Label(language.flipHorizontal, systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+        Label(
+          language.flipHorizontal,
+          systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
       }
       Button(language.reset) {
         updateSnapshot {
@@ -509,32 +539,45 @@ struct AssetEditorView: View {
   }
 
   private func updateSnapshot(_ mutate: (inout ImageEditSnapshot) -> Void) {
-    var snapshot = editSnapshot
-    mutate(&snapshot)
-    editSnapshot = snapshot
+    cancelPreviewRendering()
+    exitPreview()
+    editSession.update(mutate)
   }
 
   private func runPreview() {
+    cancelPreviewRendering()
     isRenderingPreview = true
     let snapshot = editSnapshot
-    Task { @MainActor in
+    let requestID = UUID()
+    previewRequestID = requestID
+    previewTask = Task { @MainActor in
+      defer {
+        if previewRequestID == requestID {
+          isRenderingPreview = false
+          previewTask = nil
+        }
+      }
       do {
         let image = try await Task.detached(priority: .userInitiated) {
           try previewRenderer.renderPreviewImage(sourceURL: asset.url, snapshot: snapshot)
         }.value
+        try Task.checkCancellation()
+        guard previewRequestID == requestID else { return }
         previewImage = image
         isPreviewing = true
-        checkpointSnapshot = snapshot
         exportMessage = nil
+      } catch is CancellationError {
+        return
       } catch {
+        guard previewRequestID == requestID else { return }
         exportMessage = "\(language.previewFailed): \(error.localizedDescription)"
       }
-      isRenderingPreview = false
     }
   }
 
   private func revertEdits() {
-    editSnapshot = checkpointSnapshot
+    cancelPreviewRendering()
+    editSession.revert()
     currentMaskStroke = nil
     exportMessage = nil
     exitPreview()
@@ -543,6 +586,13 @@ struct AssetEditorView: View {
   private func exitPreview() {
     isPreviewing = false
     previewImage = nil
+  }
+
+  private func cancelPreviewRendering() {
+    previewRequestID = UUID()
+    previewTask?.cancel()
+    previewTask = nil
+    isRenderingPreview = false
   }
 
   private func exportEditedCopy() {
@@ -652,334 +702,5 @@ private struct ExportOptionsPopover: View {
       .buttonStyle(.borderedProminent)
       .disabled(isExporting)
     }
-  }
-}
-
-// MARK: - Image layout
-
-private struct EditorImageLayout {
-  let imageSize: CGSize
-  let containerSize: CGSize
-
-  var contentRect: CGRect {
-    guard imageSize.width > 0, imageSize.height > 0 else {
-      return CGRect(origin: .zero, size: containerSize)
-    }
-    let scale = min(
-      containerSize.width / imageSize.width,
-      containerSize.height / imageSize.height
-    )
-    let fitted = CGSize(
-      width: imageSize.width * scale,
-      height: imageSize.height * scale
-    )
-    return CGRect(
-      x: (containerSize.width - fitted.width) / 2,
-      y: (containerSize.height - fitted.height) / 2,
-      width: fitted.width,
-      height: fitted.height
-    )
-  }
-}
-
-// MARK: - Crop overlay
-
-private enum CropHandle {
-  case move
-  case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
-}
-
-private struct InteractiveCropOverlay: View {
-  @Binding var cropRect: NormalizedCropRect
-  let contentRect: CGRect
-
-  @State private var activeHandle: CropHandle?
-  @State private var dragStartRect = NormalizedCropRect.full
-
-  var body: some View {
-    GeometryReader { proxy in
-      let canvasSize = proxy.size
-      let rect = pixelRect(for: cropRect.clamped(), in: contentRect.size)
-
-      ZStack {
-        Path { path in
-          path.addRect(CGRect(origin: .zero, size: canvasSize))
-          path.addRect(rect)
-        }
-        .fill(Color.black.opacity(0.42), style: FillStyle(eoFill: true))
-        .allowsHitTesting(false)
-
-        Rectangle()
-          .strokeBorder(Color.yellow, lineWidth: 2)
-          .background(Color.yellow.opacity(0.08))
-          .frame(width: rect.width, height: rect.height)
-          .position(x: rect.midX, y: rect.midY)
-          .contentShape(Rectangle())
-          .gesture(moveGesture(canvasSize: contentRect.size))
-          .zIndex(0)
-
-        ForEach(handlePositions(in: rect), id: \.handle) { item in
-          Circle()
-            .fill(Color.yellow)
-            .frame(width: 18, height: 18)
-            .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
-            .position(item.point)
-            .contentShape(Circle())
-            .highPriorityGesture(
-              DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                  if activeHandle == nil {
-                    activeHandle = item.handle
-                    dragStartRect = cropRect.clamped()
-                  }
-                  guard activeHandle == item.handle else { return }
-                  cropRect = resizedRect(
-                    from: dragStartRect,
-                    handle: item.handle,
-                    translation: value.translation,
-                    in: contentRect.size
-                  )
-                }
-                .onEnded { _ in
-                  activeHandle = nil
-                  cropRect = cropRect.clamped()
-                }
-            )
-            .zIndex(1)
-        }
-      }
-    }
-  }
-
-  private func moveGesture(canvasSize: CGSize) -> some Gesture {
-    DragGesture(minimumDistance: 0)
-      .onChanged { value in
-        if activeHandle == nil {
-          activeHandle = .move
-          dragStartRect = cropRect.clamped()
-        }
-        guard activeHandle == .move else { return }
-        let dx = value.translation.width / canvasSize.width
-        let dy = value.translation.height / canvasSize.height
-        cropRect = NormalizedCropRect(
-          x: min(max(0, dragStartRect.x + dx), 1 - dragStartRect.width),
-          y: min(max(0, dragStartRect.y + dy), 1 - dragStartRect.height),
-          width: dragStartRect.width,
-          height: dragStartRect.height
-        )
-      }
-      .onEnded { _ in
-        activeHandle = nil
-        cropRect = cropRect.clamped()
-      }
-  }
-
-  private func pixelRect(for crop: NormalizedCropRect, in size: CGSize) -> CGRect {
-    CGRect(
-      x: crop.x * size.width,
-      y: crop.y * size.height,
-      width: crop.width * size.width,
-      height: crop.height * size.height
-    )
-  }
-
-  private func handlePositions(in rect: CGRect) -> [(handle: CropHandle, point: CGPoint)] {
-    [
-      (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
-      (.top, CGPoint(x: rect.midX, y: rect.minY)),
-      (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
-      (.right, CGPoint(x: rect.maxX, y: rect.midY)),
-      (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY)),
-      (.bottom, CGPoint(x: rect.midX, y: rect.maxY)),
-      (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
-      (.left, CGPoint(x: rect.minX, y: rect.midY)),
-    ]
-  }
-
-  private func resizedRect(
-    from start: NormalizedCropRect,
-    handle: CropHandle,
-    translation: CGSize,
-    in size: CGSize
-  ) -> NormalizedCropRect {
-    let dx = translation.width / size.width
-    let dy = translation.height / size.height
-    let minSize = 0.05
-    var x = start.x
-    var y = start.y
-    var width = start.width
-    var height = start.height
-
-    switch handle {
-    case .move:
-      break
-    case .topLeft:
-      x = start.x + dx
-      y = start.y + dy
-      width = start.width - dx
-      height = start.height - dy
-    case .top:
-      y = start.y + dy
-      height = start.height - dy
-    case .topRight:
-      y = start.y + dy
-      width = start.width + dx
-      height = start.height - dy
-    case .right:
-      width = start.width + dx
-    case .bottomRight:
-      width = start.width + dx
-      height = start.height + dy
-    case .bottom:
-      height = start.height + dy
-    case .bottomLeft:
-      x = start.x + dx
-      width = start.width - dx
-      height = start.height + dy
-    case .left:
-      x = start.x + dx
-      width = start.width - dx
-    }
-
-    if width < minSize {
-      if handle == .left || handle == .topLeft || handle == .bottomLeft {
-        x = start.x + start.width - minSize
-      }
-      width = minSize
-    }
-    if height < minSize {
-      if handle == .top || handle == .topLeft || handle == .topRight {
-        y = start.y + start.height - minSize
-      }
-      height = minSize
-    }
-
-    return NormalizedCropRect(
-      x: min(max(0, x), 1 - width),
-      y: min(max(0, y), 1 - height),
-      width: min(width, 1),
-      height: min(height, 1)
-    ).clamped()
-  }
-}
-
-// MARK: - Mask brush overlay
-
-private struct MaskBrushOverlay: View {
-  let strokes: [MaskStroke]
-  let currentStroke: MaskStroke?
-  let brushRadius: Double
-
-  var body: some View {
-    Canvas { context, canvasSize in
-      let allStrokes = strokes + (currentStroke.map { [$0] } ?? [])
-      for stroke in allStrokes where stroke.points.count >= 1 {
-        let lineWidth = max(
-          6,
-          CGFloat(stroke.brushRadius) * min(canvasSize.width, canvasSize.height) * 2
-        )
-        if stroke.points.count == 1, let point = stroke.points.first {
-          let center = pointLocation(point, in: canvasSize)
-          let dot = CGRect(
-            x: center.x - lineWidth / 2,
-            y: center.y - lineWidth / 2,
-            width: lineWidth,
-            height: lineWidth
-          )
-          context.fill(Path(ellipseIn: dot), with: .color(.red.opacity(0.55)))
-          continue
-        }
-        var path = Path()
-        let first = stroke.points[0]
-        path.move(to: pointLocation(first, in: canvasSize))
-        for point in stroke.points.dropFirst() {
-          path.addLine(to: pointLocation(point, in: canvasSize))
-        }
-        context.stroke(
-          path,
-          with: .color(.red.opacity(0.55)),
-          style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
-        )
-      }
-    }
-    .allowsHitTesting(false)
-  }
-
-  private func pointLocation(_ point: MaskBrushPoint, in size: CGSize) -> CGPoint {
-    CGPoint(x: point.x * size.width, y: point.y * size.height)
-  }
-}
-
-private struct MaskPaintingSurface: View {
-  @Binding var maskStrokes: [MaskStroke]
-  @Binding var currentMaskStroke: MaskStroke?
-  let brushRadius: Double
-
-  var body: some View {
-    GeometryReader { proxy in
-      Color.clear
-        .contentShape(Rectangle())
-        .gesture(
-          DragGesture(minimumDistance: 0)
-            .onChanged { value in
-              let point = normalizedPoint(
-                location: value.location,
-                in: proxy.size
-              )
-              if currentMaskStroke == nil {
-                currentMaskStroke = MaskStroke(points: [point], brushRadius: brushRadius)
-              } else if var stroke = currentMaskStroke {
-                if let last = stroke.points.last {
-                  let interpolated = interpolatedPoints(from: last, to: point, brushRadius: brushRadius)
-                  stroke.points.append(contentsOf: interpolated)
-                } else {
-                  stroke.points.append(point)
-                }
-                stroke.brushRadius = brushRadius
-                currentMaskStroke = stroke
-              }
-            }
-            .onEnded { _ in
-              if let stroke = currentMaskStroke, !stroke.points.isEmpty {
-                maskStrokes.append(stroke)
-              }
-              currentMaskStroke = nil
-            }
-        )
-    }
-  }
-
-  private func normalizedPoint(location: CGPoint, in size: CGSize) -> MaskBrushPoint {
-    MaskBrushPoint(
-      x: Double(min(max(0, location.x / size.width), 1)),
-      y: Double(min(max(0, location.y / size.height), 1))
-    )
-  }
-
-  private func interpolatedPoints(
-    from start: MaskBrushPoint,
-    to end: MaskBrushPoint,
-    brushRadius: Double
-  ) -> [MaskBrushPoint] {
-    let dx = end.x - start.x
-    let dy = end.y - start.y
-    let distance = hypot(dx, dy)
-    let step = max(brushRadius / 4, 0.004)
-    guard distance > step else { return [end] }
-
-    var points: [MaskBrushPoint] = []
-    var traveled = step
-    while traveled < distance {
-      let t = traveled / distance
-      points.append(
-        MaskBrushPoint(
-          x: start.x + dx * t,
-          y: start.y + dy * t
-        )
-      )
-      traveled += step
-    }
-    points.append(end)
-    return points
   }
 }
