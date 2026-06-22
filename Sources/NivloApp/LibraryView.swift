@@ -554,20 +554,19 @@ struct LibraryView: View {
       )
       .navigationTitle(title)
     } else {
-      ScrollView {
-        LazyVGrid(columns: columns, spacing: 20) {
-          ForEach(assets) { asset in
-            AssetCard(
-              asset: asset,
-              enrichment: model.enrichments[asset.id],
-              isSelected: selectedAssetIDs.contains(asset.id)
-            )
-            .onTapGesture {
+      GeometryReader { proxy in
+        ScrollView {
+          AssetMasonryGrid(
+            assets: assets,
+            enrichments: model.enrichments,
+            selectedAssetIDs: selectedAssetIDs,
+            availableWidth: max(0, proxy.size.width - 48),
+            onOpen: { asset in
               previewAsset = asset
             }
-          }
+          )
+          .padding(24)
         }
-        .padding(24)
       }
       .navigationTitle(title)
     }
@@ -934,7 +933,7 @@ private struct FolderSidebarRow: View {
   }
 }
 
-private struct AssetCard: View {
+struct AssetCard: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
   var isSelected = false
@@ -944,7 +943,7 @@ private struct AssetCard: View {
       ZStack(alignment: .topTrailing) {
         thumbnail
           .frame(maxWidth: .infinity)
-          .aspectRatio(4 / 3, contentMode: .fill)
+          .aspectRatio(asset.displayAspectRatio, contentMode: .fit)
           .clipShape(RoundedRectangle(cornerRadius: 12))
           .contentShape(RoundedRectangle(cornerRadius: 12))
           .overlay {

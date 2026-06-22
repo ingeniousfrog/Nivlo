@@ -58,12 +58,19 @@ struct AssetImageView: View {
     [
       enrichment?.thumbnailURL.standardizedFileURL.path ?? "",
       asset.url.standardizedFileURL.path,
+      "\(asset.fileSize)",
+      asset.modifiedAt.map { "\($0.timeIntervalSince1970)" } ?? "",
       "\(maxPixelSize)",
     ].joined(separator: "|")
   }
 
   private func loadImage() async {
-    image = nil
+    let loadKey = loadKey
+    if let cachedImage = AssetImageCache.shared.image(forKey: loadKey) {
+      image = cachedImage
+      isLoading = false
+      return
+    }
     isLoading = true
     let thumbnailURL = enrichment?.thumbnailURL
     let sourceURL = asset.url
@@ -78,8 +85,48 @@ struct AssetImageView: View {
     guard !Task.isCancelled else {
       return
     }
-    image = data.flatMap(NSImage.init(data:))
+    if let data {
+      let loadedImage = NSImage(data: data)
+      if let loadedImage {
+        AssetImageCache.shared.insert(
+          loadedImage,
+          cost: data.count,
+          forKey: loadKey
+        )
+      }
+      image = loadedImage
+    } else {
+      image = nil
+    }
     isLoading = false
+  }
+}
+
+@MainActor
+private final class AssetImageCache {
+  static let shared = AssetImageCache()
+
+  private let cache = NSCache<NSString, NSImage>()
+
+  private init() {
+    cache.countLimit = 600
+    cache.totalCostLimit = 256 * 1_024 * 1_024
+  }
+
+  func image(forKey key: String) -> NSImage? {
+    cache.object(forKey: key as NSString)
+  }
+
+  func insert(
+    _ image: NSImage,
+    cost: Int,
+    forKey key: String
+  ) {
+    cache.setObject(
+      image,
+      forKey: key as NSString,
+      cost: cost
+    )
   }
 }
 
