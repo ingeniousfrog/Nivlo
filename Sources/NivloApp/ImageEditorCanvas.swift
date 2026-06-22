@@ -1,6 +1,18 @@
 import NivloDomain
 import SwiftUI
 
+extension NormalizedCropRect {
+  func pixelRect(in canvasSize: CGSize) -> CGRect {
+    let crop = clamped()
+    return CGRect(
+      x: crop.x * canvasSize.width,
+      y: crop.y * canvasSize.height,
+      width: crop.width * canvasSize.width,
+      height: crop.height * canvasSize.height
+    )
+  }
+}
+
 struct EditorImageLayout {
   let imageSize: CGSize
   let containerSize: CGSize
@@ -35,7 +47,7 @@ struct InteractiveCropOverlay: View {
   var body: some View {
     GeometryReader { proxy in
       let canvasSize = proxy.size
-      let rect = pixelRect(for: cropRect.clamped(), in: canvasSize)
+      let rect = cropRect.pixelRect(in: canvasSize)
 
       ZStack {
         cropShade(canvasSize: canvasSize, cropRect: rect)
@@ -130,15 +142,6 @@ struct InteractiveCropOverlay: View {
         activeHandle = nil
         cropRect = cropRect.clamped()
       }
-  }
-
-  private func pixelRect(for crop: NormalizedCropRect, in size: CGSize) -> CGRect {
-    CGRect(
-      x: crop.x * size.width,
-      y: crop.y * size.height,
-      width: crop.width * size.width,
-      height: crop.height * size.height
-    )
   }
 
   private func handlePositions(

@@ -240,8 +240,16 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorGeometryHint: String {
     text(
-      "Drag the frame to move the crop, or drag any handle to resize it. Revert restores the image to its opening state.",
-      "拖动框体可移动裁切区域，拖动任一手柄可调整大小。还原会恢复到打开编辑器时的状态。"
+      "Drag the frame to move the crop, or drag any handle to resize it. Apply Crop confirms the crop; Reset restores the default geometry. Revert restores the image to its opening state.",
+      "拖动框体可移动裁切区域，拖动任一手柄可调整大小。应用裁切会确认裁切结果；重置会恢复默认几何变换。还原会恢复到打开编辑器时的状态。"
+    )
+  }
+  var applyCrop: String { text("Apply Crop", "应用裁切") }
+  var adjustCrop: String { text("Adjust Crop", "调整裁切") }
+  var cropAppliedHint: String {
+    text(
+      "Crop applied. Adjust Crop to change the frame again.",
+      "裁切已应用。点击「调整裁切」可重新编辑裁切框。"
     )
   }
   var editorAdjustHint: String {
@@ -498,10 +506,11 @@ struct LibraryView: View {
           }
         } label: {
           Label(
-            isSelecting ? language.doneSelecting : language.select,
-            systemImage: isSelecting ? "checkmark.circle.fill" : "checkmark.circle"
+            isSelecting ? language.doneSelecting : language.selectForExport,
+            systemImage: isSelecting ? "checkmark" : "checklist"
           )
         }
+        .help(language.selectForExport)
 
         ShareLink(items: selectedAssets.map(\.url)) {
           Label(language.shareSelected, systemImage: "square.and.arrow.up")

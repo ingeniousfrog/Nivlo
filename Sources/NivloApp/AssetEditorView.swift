@@ -60,6 +60,7 @@ struct AssetEditorView: View {
   @State private var lastExportedURL: URL?
   @State private var isExporting = false
   @State private var isExportOptionsPresented = false
+  @State private var isCropEditing = true
 
   private let pipeline = ImageEditPipeline()
   private let inspectorWidth: CGFloat = 360
@@ -70,6 +71,10 @@ struct AssetEditorView: View {
 
   private var canEdit: Bool {
     UTType(asset.contentType)?.conforms(to: .image) == true
+  }
+
+  private var showsCropPreview: Bool {
+    !isCropEditing && !editSnapshot.cropRect.isEffectivelyFull
   }
 
   var body: some View {
@@ -205,11 +210,18 @@ struct AssetEditorView: View {
       .rotationEffect(.degrees(Double(editSnapshot.quarterTurns * 90)))
     }
     .frame(width: size.width, height: size.height)
+    .mask {
+      if showsCropPreview {
+        Rectangle().path(in: editSnapshot.cropRect.pixelRect(in: size))
+      } else {
+        Rectangle()
+      }
+    }
     .clipped()
     .background(Color.black.opacity(0.12))
     .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
     .overlay {
-      if selectedTool == .geometry {
+      if selectedTool == .geometry && isCropEditing {
         InteractiveCropOverlay(cropRect: snapshotBinding(\.cropRect))
           .frame(width: size.width, height: size.height)
       }
@@ -280,6 +292,9 @@ struct AssetEditorView: View {
         ForEach(ImageEditorTool.allCases) { tool in
           Button {
             selectedTool = tool
+            if tool == .geometry {
+              isCropEditing = true
+            }
           } label: {
             VStack(spacing: 4) {
               Image(systemName: tool.icon)
@@ -335,7 +350,7 @@ struct AssetEditorView: View {
   private var statusHint: String {
     switch selectedTool {
     case .geometry:
-      language.editorGeometryHint
+      isCropEditing ? language.editorGeometryHint : language.cropAppliedHint
     case .adjust:
       language.editorAdjustHint
     case .mask:
@@ -347,7 +362,7 @@ struct AssetEditorView: View {
 
   private var geometryControls: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text(language.editorGeometryHint)
+      Text(isCropEditing ? language.editorGeometryHint : language.cropAppliedHint)
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -373,12 +388,21 @@ struct AssetEditorView: View {
           language.flipHorizontal,
           systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
       }
-      Button(language.reset) {
-        updateSnapshot {
-          $0.cropRect = ImageEditSnapshot.defaultInitial.cropRect
-          $0.quarterTurns = 0
-          $0.flippedHorizontally = false
+      if !isCropEditing, !editSnapshot.cropRect.isEffectivelyFull {
+        Button(language.adjustCrop) {
+          isCropEditing = true
         }
+      }
+      HStack(spacing: 8) {
+        Button(language.applyCrop) {
+          isCropEditing = false
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(editSnapshot.cropRect.isEffectivelyFull || !isCropEditing)
+        Button(language.reset) {
+          resetGeometry()
+        }
+        .buttonStyle(.bordered)
       }
     }
   }
@@ -642,6 +666,16 @@ struct AssetEditorView: View {
     currentMaskStroke = nil
     selectedAnnotationID = nil
     exportMessage = nil
+    isCropEditing = true
+  }
+
+  private func resetGeometry() {
+    updateSnapshot {
+      $0.cropRect = ImageEditSnapshot.defaultInitial.cropRect
+      $0.quarterTurns = 0
+      $0.flippedHorizontally = false
+    }
+    isCropEditing = true
   }
 
   private func exportEditedCopy() {
