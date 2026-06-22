@@ -6,7 +6,7 @@ public actor InMemoryAssetRepository:
   ProcessingHistoryRepository
 {
   private var storedAssets: [AssetID: ImageAsset]
-  private var hiddenPaths: Set<String> = []
+  private var hiddenRecords: [String: HiddenAssetRecord] = [:]
   private var storedEnrichments: [AssetID: AssetEnrichment] = [:]
   private var storedRoots: [UUID: LibraryRoot] = [:]
   private var storedProcessingHistory: [AssetID: [ProcessingHistoryRecord]] = [:]
@@ -24,19 +24,36 @@ public actor InMemoryAssetRepository:
       .apply(to: assets(), enrichments: storedEnrichments)
   }
 
+  public func hiddenAssets() -> [HiddenAssetRecord] {
+    hiddenRecords.values.sorted { $0.hiddenAt > $1.hiddenAt }
+  }
+
   public func hiddenAssetPaths(in rootURL: URL) -> Set<String> {
     let rootURL = rootURL.standardizedFileURL
-    return hiddenPaths.filter { URL(filePath: $0).isContained(in: rootURL) }
+    return Set(
+      hiddenRecords.keys.filter { URL(filePath: $0).isContained(in: rootURL) }
+    )
   }
 
   public func hideAsset(_ asset: ImageAsset) {
-    hiddenPaths.insert(asset.url.standardizedFileURL.path)
+    let path = asset.url.standardizedFileURL.path
+    hiddenRecords[path] = HiddenAssetRecord(
+      url: asset.url.standardizedFileURL,
+      hiddenAt: Date(),
+      asset: asset
+    )
     storedAssets[asset.id] = nil
     storedEnrichments[asset.id] = nil
   }
 
+  public func unhideAsset(at url: URL) {
+    hiddenRecords[url.standardizedFileURL.path] = nil
+  }
+
   public func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) {
-    let visibleAssets = assets.filter { !hiddenPaths.contains($0.url.standardizedFileURL.path) }
+    let visibleAssets = assets.filter {
+      hiddenRecords[$0.url.standardizedFileURL.path] == nil
+    }
     invalidateChangedEnrichments(for: visibleAssets)
     let replacements = Dictionary(
       uniqueKeysWithValues: visibleAssets.map { ($0.id, $0) }
@@ -59,7 +76,9 @@ public actor InMemoryAssetRepository:
     with assets: [ImageAsset]
   ) -> Int {
     let scopeURL = scopeURL.standardizedFileURL
-    let visibleAssets = assets.filter { !hiddenPaths.contains($0.url.standardizedFileURL.path) }
+    let visibleAssets = assets.filter {
+      hiddenRecords[$0.url.standardizedFileURL.path] == nil
+    }
     let existingIDs = Set(
       storedAssets.values
         .filter { $0.url.isContained(in: scopeURL) }

@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class LibraryModel: ObservableObject {
   @Published private(set) var assets: [ImageAsset] = []
+  @Published private(set) var hiddenAssets: [HiddenAssetRecord] = []
   @Published private(set) var roots: [LibraryRoot] = []
   @Published private(set) var spotlightCandidates: [SpotlightCandidate] = []
   @Published private(set) var enrichments: [AssetID: AssetEnrichment] = [:]
@@ -58,6 +59,7 @@ final class LibraryModel: ObservableObject {
       let restoration = await rootAccessManager.restore()
       roots = try await repository.libraryRoots()
       assets = try await repository.assets()
+      hiddenAssets = try await repository.hiddenAssets()
       enrichments = Dictionary(
         uniqueKeysWithValues: try await repository.enrichments()
           .map { ($0.assetID, $0) }
@@ -230,6 +232,7 @@ final class LibraryModel: ObservableObject {
     do {
       try await repository.hideAsset(asset)
       assets = try await repository.assets()
+      hiddenAssets = try await repository.hiddenAssets()
       enrichments = Dictionary(
         uniqueKeysWithValues: try await repository.enrichments()
           .map { ($0.assetID, $0) }
@@ -239,6 +242,27 @@ final class LibraryModel: ObservableObject {
     } catch {
       errorMessage = error.localizedDescription
       statusMessage = "Couldn’t hide asset"
+    }
+  }
+
+  func unhideAsset(_ record: HiddenAssetRecord) async {
+    errorMessage = nil
+    do {
+      try await repository.unhideAsset(at: record.url)
+      hiddenAssets = try await repository.hiddenAssets()
+      guard
+        let root = await rootAccessManager.activeURLs()
+          .filter({ record.url.isContained(in: $0) })
+          .max(by: { $0.path.count < $1.path.count })
+      else {
+        statusMessage = "Asset unhidden · add its folder again to reindex it"
+        return
+      }
+      await scanActiveRoot(root)
+      statusMessage = "\(assets.count) images indexed · restored \(record.url.lastPathComponent)"
+    } catch {
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn’t restore hidden asset"
     }
   }
 
@@ -304,6 +328,7 @@ final class LibraryModel: ObservableObject {
   private func refreshAfterFileEvents() async {
     do {
       assets = try await repository.assets()
+      hiddenAssets = try await repository.hiddenAssets()
       enrichments = Dictionary(
         uniqueKeysWithValues: try await repository.enrichments()
           .map { ($0.assetID, $0) }

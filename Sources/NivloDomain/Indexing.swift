@@ -25,8 +25,10 @@ public struct ScanSummary: Equatable, Sendable {
 public protocol AssetRepository: Sendable {
   func assets() async throws -> [ImageAsset]
   func searchAssets(matching query: String) async throws -> [ImageAsset]
+  func hiddenAssets() async throws -> [HiddenAssetRecord]
   func hiddenAssetPaths(in rootURL: URL) async throws -> Set<String>
   func hideAsset(_ asset: ImageAsset) async throws
+  func unhideAsset(at url: URL) async throws
   func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) async throws
   func replaceAssets(in rootURL: URL, with assets: [ImageAsset]) async throws -> Int
   func replaceAssets(
@@ -34,6 +36,20 @@ public protocol AssetRepository: Sendable {
     under rootURL: URL,
     with assets: [ImageAsset]
   ) async throws -> Int
+}
+
+public struct HiddenAssetRecord: Identifiable, Equatable, Sendable {
+  public var id: String { url.standardizedFileURL.path }
+
+  public let url: URL
+  public let hiddenAt: Date
+  public let asset: ImageAsset?
+
+  public init(url: URL, hiddenAt: Date, asset: ImageAsset?) {
+    self.url = url
+    self.hiddenAt = hiddenAt
+    self.asset = asset
+  }
 }
 
 public protocol DirectoryScanning: Sendable {

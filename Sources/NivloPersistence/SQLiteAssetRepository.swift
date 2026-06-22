@@ -137,19 +137,112 @@ public actor SQLiteAssetRepository:
     return paths
   }
 
-  public func hideAsset(_ asset: ImageAsset) throws {
+  public func hiddenAssets() throws -> [HiddenAssetRecord] {
     let sql = """
+      SELECT h.path, h.hidden_at,
+             m.volume_id, m.file_id, m.filename, m.content_type,
+             m.file_size, m.created_at, m.modified_at,
+             m.pixel_width, m.pixel_height
+      FROM hidden_assets h
+      LEFT JOIN hidden_asset_metadata m ON m.path = h.path
+      ORDER BY h.hidden_at DESC, h.path ASC;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+
+    var records: [HiddenAssetRecord] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      let path = text(at: 0, from: statement)
+      let url = URL(filePath: path)
+      let asset: ImageAsset?
+      if sqlite3_column_type(statement, 2) == SQLITE_NULL {
+        asset = nil
+      } else {
+        asset = ImageAsset(
+          id: AssetID(
+            volumeIdentifier: text(at: 2, from: statement),
+            fileIdentifier: text(at: 3, from: statement)
+          ),
+          url: url,
+          filename: text(at: 4, from: statement),
+          contentType: text(at: 5, from: statement),
+          fileSize: sqlite3_column_int64(statement, 6),
+          createdAt: date(at: 7, from: statement),
+          modifiedAt: date(at: 8, from: statement),
+          pixelWidth: integer(at: 9, from: statement),
+          pixelHeight: integer(at: 10, from: statement)
+        )
+      }
+      records.append(
+        HiddenAssetRecord(
+          url: url,
+          hiddenAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+          asset: asset
+        )
+      )
+    }
+    try requireFinished(statement, sql: sql)
+    return records
+  }
+
+  public func hideAsset(_ asset: ImageAsset) throws {
+    let hiddenSQL = """
       INSERT OR REPLACE INTO hidden_assets(path, hidden_at)
       VALUES (?, ?);
       """
+    let metadataSQL = """
+      INSERT OR REPLACE INTO hidden_asset_metadata (
+          path, volume_id, file_id, filename, content_type, file_size,
+          created_at, modified_at, pixel_width, pixel_height
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      """
     try execute("BEGIN IMMEDIATE TRANSACTION;")
     do {
-      let statement = try prepare(sql)
-      defer { sqlite3_finalize(statement) }
-      try bind(asset.url.standardizedFileURL.path, at: 1, to: statement, sql: sql)
-      sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
-      try stepToCompletion(statement, sql: sql)
+      let path = asset.url.standardizedFileURL.path
+      let hiddenStatement = try prepare(hiddenSQL)
+      defer { sqlite3_finalize(hiddenStatement) }
+      try bind(path, at: 1, to: hiddenStatement, sql: hiddenSQL)
+      sqlite3_bind_double(hiddenStatement, 2, Date().timeIntervalSince1970)
+      try stepToCompletion(hiddenStatement, sql: hiddenSQL)
+
+      let metadataStatement = try prepare(metadataSQL)
+      defer { sqlite3_finalize(metadataStatement) }
+      try bind(path, at: 1, to: metadataStatement, sql: metadataSQL)
+      try bind(asset.id.volumeIdentifier, at: 2, to: metadataStatement, sql: metadataSQL)
+      try bind(asset.id.fileIdentifier, at: 3, to: metadataStatement, sql: metadataSQL)
+      try bind(asset.filename, at: 4, to: metadataStatement, sql: metadataSQL)
+      try bind(asset.contentType, at: 5, to: metadataStatement, sql: metadataSQL)
+      sqlite3_bind_int64(metadataStatement, 6, asset.fileSize)
+      bind(asset.createdAt, at: 7, to: metadataStatement)
+      bind(asset.modifiedAt, at: 8, to: metadataStatement)
+      bind(asset.pixelWidth, at: 9, to: metadataStatement)
+      bind(asset.pixelHeight, at: 10, to: metadataStatement)
+      try stepToCompletion(metadataStatement, sql: metadataSQL)
+
       try deleteAssets(Set([asset.id]))
+      try execute("COMMIT;")
+    } catch {
+      try? execute("ROLLBACK;")
+      throw error
+    }
+  }
+
+  public func unhideAsset(at url: URL) throws {
+    let path = url.standardizedFileURL.path
+    try execute("BEGIN IMMEDIATE TRANSACTION;")
+    do {
+      for table in ["hidden_asset_metadata", "hidden_assets"] {
+        let sql = "DELETE FROM \(table) WHERE path = ?;"
+        let statement = try prepare(sql)
+        try bind(path, at: 1, to: statement, sql: sql)
+        do {
+          try stepToCompletion(statement, sql: sql)
+          sqlite3_finalize(statement)
+        } catch {
+          sqlite3_finalize(statement)
+          throw error
+        }
+      }
       try execute("COMMIT;")
     } catch {
       try? execute("ROLLBACK;")
@@ -947,6 +1040,20 @@ public actor SQLiteAssetRepository:
             hidden_at REAL NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS hidden_asset_metadata (
+            path TEXT PRIMARY KEY,
+            volume_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            created_at REAL,
+            modified_at REAL,
+            pixel_width INTEGER,
+            pixel_height INTEGER,
+            FOREIGN KEY (path) REFERENCES hidden_assets(path) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS library_roots (
             id TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
@@ -1008,6 +1115,7 @@ public actor SQLiteAssetRepository:
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
         """
     )
   }

@@ -4,7 +4,7 @@ import NivloIndexing
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum NivloLanguage: String, CaseIterable, Identifiable {
+enum NivloLanguage: String, CaseIterable, Identifiable {
   case english
   case simplifiedChinese
 
@@ -22,8 +22,8 @@ private enum NivloLanguage: String, CaseIterable, Identifiable {
   var addFolder: String { text("Add Folder", "添加文件夹") }
   var allImages: String { text("All Images", "全部图片") }
   var cancel: String { text("Cancel", "取消") }
-  var delete: String { text("Delete", "删除") }
-  var deleteHelp: String {
+  var hideAsset: String { text("Hide", "隐藏") }
+  var hideHelp: String {
     text("Hide from Nivlo without deleting the original file", "从 Nivlo 隐藏，但不删除原文件")
   }
   var dimensions: String { text("Dimensions", "尺寸") }
@@ -45,6 +45,12 @@ private enum NivloLanguage: String, CaseIterable, Identifiable {
   var folders: String { text("Folders", "文件夹") }
   var format: String { text("Format", "格式") }
   var hide: String { text("Hide", "隐藏") }
+  var hiddenFiles: String { text("Hidden Files", "隐藏文件") }
+  var hiddenFilesDescription: String {
+    text("Assets hidden from the main library appear here.", "从主图库隐藏的素材会显示在这里。")
+  }
+  var noHiddenFiles: String { text("No Hidden Files", "没有隐藏文件") }
+  var restore: String { text("Unhide", "取消隐藏") }
   var hideAssetTitle: String { text("Hide asset from Nivlo?", "从 Nivlo 隐藏这个素材？") }
   var inspector: String { text("Inspector", "信息") }
   var library: String { text("Library", "图库") }
@@ -77,6 +83,23 @@ private enum NivloLanguage: String, CaseIterable, Identifiable {
   var status: String { text("Status", "状态") }
   var validateIndex: String { text("Validate Index", "校验索引") }
   var copyPath: String { text("Copy path", "复制路径") }
+  var copied: String { text("Copied", "已复制") }
+  var copyFailed: String { text("Copy failed", "复制失败") }
+  var close: String { text("Close", "关闭") }
+  var editorTitle: String { text("Nivlo Editor", "Nivlo 编辑器") }
+  var flipHorizontal: String { text("Flip Horizontal", "水平翻转") }
+  var reset: String { text("Reset", "重置") }
+  var rotateLeft: String { text("Rotate Left", "向左旋转") }
+  var rotateRight: String { text("Rotate Right", "向右旋转") }
+  var saveEditedCopy: String { text("Export Edited Copy", "导出编辑副本") }
+  var editorExported: String { text("Edited copy exported", "编辑副本已导出") }
+  var editorExportFailed: String { text("Couldn’t export edited copy", "无法导出编辑副本") }
+  var originalFileProtected: String {
+    text(
+      "Choose a different filename. Nivlo never overwrites the original file.",
+      "请选择其他文件名。Nivlo 不会覆盖原文件。"
+    )
+  }
 
   func hideAssetMessage(_ filename: String) -> String {
     text(
@@ -127,6 +150,7 @@ struct LibraryView: View {
     case spotlight
     case duplicates
     case similar
+    case hidden
     case smart(SmartAssetView)
   }
 
@@ -135,7 +159,6 @@ struct LibraryView: View {
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
   @State private var previewAsset: ImageAsset?
-  @State private var assetPendingRemoval: ImageAsset?
   @State private var folderPendingRemoval: LibraryRoot?
   @State private var folderFilter: String?
   @State private var sourceFilter: AssetSource?
@@ -267,35 +290,9 @@ struct LibraryView: View {
         onExport: {
           chooseExportFolder(assetIDs: [asset.id])
         },
-        onEdit: {
-          NSWorkspace.shared.open(asset.url)
-        },
-        onDelete: {
-          assetPendingRemoval = asset
+        onHide: {
+          hideAsset(asset)
         }
-      )
-    }
-    .alert(
-      language.hideAssetTitle,
-      isPresented: Binding(
-        get: { assetPendingRemoval != nil },
-        set: { isPresented in
-          if !isPresented {
-            assetPendingRemoval = nil
-          }
-        }
-      ),
-      presenting: assetPendingRemoval
-    ) { asset in
-      Button(language.hide, role: .destructive) {
-        hideAsset(asset)
-      }
-      Button(language.cancel, role: .cancel) {
-        assetPendingRemoval = nil
-      }
-    } message: { asset in
-      Text(
-        language.hideAssetMessage(asset.filename)
       )
     }
     .alert(
@@ -338,6 +335,9 @@ struct LibraryView: View {
         Label(language.similar, systemImage: "circle.grid.cross")
           .badge(model.similarGroups.count)
           .tag(SectionSelection.similar)
+        Label(language.hiddenFiles, systemImage: "eye.slash")
+          .badge(model.hiddenAssets.count)
+          .tag(SectionSelection.hidden)
       }
       Section(language.smartViews) {
         smartViewRow(.screenshots, systemImage: "camera.viewfinder")
@@ -430,6 +430,8 @@ struct LibraryView: View {
           "Images within the perceptual-hash similarity threshold appear here.",
         groups: model.similarGroups.map(\.assetIDs)
       )
+    } else if selection == .hidden {
+      hiddenAssetsContent
     } else if case .smart(let smartView) = selection {
       assetGridContent(
         title: language.smartViewTitle(smartView),
@@ -553,9 +555,38 @@ struct LibraryView: View {
     if previewAsset?.id == asset.id {
       previewAsset = nil
     }
-    assetPendingRemoval = nil
     Task {
       await model.hideAsset(asset)
+    }
+  }
+
+  @ViewBuilder
+  private var hiddenAssetsContent: some View {
+    if model.hiddenAssets.isEmpty {
+      ContentUnavailableView(
+        language.noHiddenFiles,
+        systemImage: "eye.slash",
+        description: Text(language.hiddenFilesDescription)
+      )
+      .navigationTitle(language.hiddenFiles)
+    } else {
+      ScrollView {
+        LazyVGrid(columns: columns, spacing: 20) {
+          ForEach(model.hiddenAssets) { record in
+            HiddenAssetCard(
+              record: record,
+              language: language,
+              onRestore: {
+                Task {
+                  await model.unhideAsset(record)
+                }
+              }
+            )
+          }
+        }
+        .padding(24)
+      }
+      .navigationTitle(language.hiddenFiles)
     }
   }
 
@@ -892,6 +923,63 @@ private struct AssetCard: View {
   }
 }
 
+private struct HiddenAssetCard: View {
+  let record: HiddenAssetRecord
+  let language: NivloLanguage
+  let onRestore: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if let asset = record.asset {
+        AssetImageView(
+          asset: asset,
+          enrichment: nil,
+          maxPixelSize: 420
+        )
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+      } else {
+        ZStack {
+          RoundedRectangle(cornerRadius: 12)
+            .fill(.quaternary)
+          Image(systemName: "eye.slash")
+            .font(.largeTitle)
+            .foregroundStyle(.secondary)
+        }
+        .aspectRatio(4 / 3, contentMode: .fit)
+      }
+
+      Text(record.url.lastPathComponent)
+        .font(.headline)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Text(record.url.deletingLastPathComponent().path)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+        .truncationMode(.middle)
+
+      HStack {
+        Button(language.restore) {
+          onRestore()
+        }
+        .buttonStyle(.borderedProminent)
+        Spacer()
+        Button {
+          NSWorkspace.shared.activateFileViewerSelecting([record.url])
+        } label: {
+          Image(systemName: "finder")
+        }
+        .buttonStyle(.bordered)
+        .help(language.showInFinder)
+      }
+    }
+    .padding(10)
+    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+  }
+}
+
 private struct AssetPreviewPanel: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
@@ -899,10 +987,13 @@ private struct AssetPreviewPanel: View {
   let isSelected: Bool
   let onToggleSelection: () -> Void
   let onExport: () -> Void
-  let onEdit: () -> Void
-  let onDelete: () -> Void
+  let onHide: () -> Void
 
   @Environment(\.dismiss) private var dismiss
+  @State private var isEditorPresented = false
+  @State private var isHideConfirmationPresented = false
+  @State private var copyFeedback: CopyFeedback?
+  @State private var copyFeedbackTask: Task<Void, Never>?
 
   private var details: AssetPreviewDetails {
     AssetPreviewDetails(asset: asset)
@@ -928,8 +1019,12 @@ private struct AssetPreviewPanel: View {
           isSelected: isSelected,
           onToggleSelection: onToggleSelection,
           onExport: onExport,
-          onEdit: onEdit,
-          onDelete: onDelete
+          onEdit: {
+            isEditorPresented = true
+          },
+          onHide: {
+            isHideConfirmationPresented = true
+          }
         )
 
         Button {
@@ -976,6 +1071,23 @@ private struct AssetPreviewPanel: View {
       }
     }
     .frame(minWidth: 1_020, minHeight: 680)
+    .sheet(isPresented: $isEditorPresented) {
+      AssetEditorView(asset: asset, language: language)
+    }
+    .alert(
+      language.hideAssetTitle,
+      isPresented: $isHideConfirmationPresented
+    ) {
+      Button(language.hide, role: .destructive) {
+        onHide()
+      }
+      Button(language.cancel, role: .cancel) {}
+    } message: {
+      Text(language.hideAssetMessage(asset.filename))
+    }
+    .onDisappear {
+      copyFeedbackTask?.cancel()
+    }
   }
 
   private func detailRow(_ label: String, _ value: String) -> some View {
@@ -1001,14 +1113,41 @@ private struct AssetPreviewPanel: View {
           .textSelection(.enabled)
           .lineLimit(4)
         Button {
-          AssetClipboard.copyPath(asset.url)
+          copyPath()
         } label: {
-          Image(systemName: "doc.on.doc")
+          if let copyFeedback {
+            Label(
+              copyFeedback == .success ? language.copied : language.copyFailed,
+              systemImage: copyFeedback == .success
+                ? "checkmark.circle.fill"
+                : "exclamationmark.circle"
+            )
+          } else {
+            Image(systemName: "doc.on.doc")
+          }
         }
         .buttonStyle(.borderless)
         .help(language.copyPath)
       }
     }
+  }
+
+  private func copyPath() {
+    copyFeedbackTask?.cancel()
+    copyFeedback = AssetClipboard.copyPath(asset.url) ? .success : .failure
+    copyFeedbackTask = Task {
+      do {
+        try await Task.sleep(for: .seconds(1.5))
+      } catch {
+        return
+      }
+      copyFeedback = nil
+    }
+  }
+
+  private enum CopyFeedback: Equatable {
+    case success
+    case failure
   }
 }
 
@@ -1019,7 +1158,7 @@ private struct AssetPreviewToolbar: View {
   let onToggleSelection: () -> Void
   let onExport: () -> Void
   let onEdit: () -> Void
-  let onDelete: () -> Void
+  let onHide: () -> Void
 
   var body: some View {
     HStack(spacing: 8) {
@@ -1054,23 +1193,26 @@ private struct AssetPreviewToolbar: View {
       }
       .help(isSelected ? language.removeFromSelection : language.selectForExport)
 
-      Button(role: .destructive) {
-        onDelete()
+      Button {
+        onHide()
       } label: {
-        Label(language.delete, systemImage: "trash")
+        Label(language.hideAsset, systemImage: "eye.slash")
       }
-      .help(language.deleteHelp)
+      .help(language.hideHelp)
     }
     .buttonStyle(.bordered)
   }
 }
 
 private enum AssetClipboard {
-  static func copyPath(_ url: URL) {
+  @discardableResult
+  static func copyPath(_ url: URL) -> Bool {
     NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(url.standardizedFileURL.path, forType: .string)
+    return NSPasteboard.general.setString(
+      url.standardizedFileURL.path,
+      forType: .string
+    )
   }
-
 }
 
 extension URL {

@@ -212,6 +212,27 @@ struct SQLiteAssetRepositoryTests {
     #expect(try await repository.assets() == [visible])
     #expect(try await repository.hiddenAssetPaths(in: rootURL) == Set([hidden.url.path]))
   }
+
+  @Test("hidden assets retain metadata and can be restored")
+  func hiddenAssetsCanBeRestored() async throws {
+    let repository = try SQLiteAssetRepository(databaseURL: temporaryDatabaseURL())
+    let rootURL = URL(filePath: "/tmp/nivlo-library")
+    let hidden = makeAsset(
+      id: AssetID(volumeIdentifier: "volume-a", fileIdentifier: "file-hidden"),
+      url: rootURL.appending(path: "hidden.png")
+    )
+    _ = try await repository.replaceAssets(in: rootURL, with: [hidden])
+
+    try await repository.hideAsset(hidden)
+    let records = try await repository.hiddenAssets()
+    try await repository.unhideAsset(at: hidden.url)
+    _ = try await repository.replaceAssets(in: rootURL, with: [hidden])
+
+    #expect(records.count == 1)
+    #expect(records.first?.asset == hidden)
+    #expect(try await repository.hiddenAssets().isEmpty)
+    #expect(try await repository.assets() == [hidden])
+  }
 }
 
 private func temporaryDatabaseURL() -> URL {
