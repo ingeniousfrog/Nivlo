@@ -263,6 +263,28 @@ struct DirectoryScannerTests {
     #expect(summary.skippedCount == 1)
     #expect(assets.map(\.filename) == ["clip.mov"])
   }
+
+  @Test("an unhidden asset returns after a scoped rescan")
+  func unhiddenAssetReturnsAfterScopedRescan() async throws {
+    let fixture = try TemporaryDirectory()
+    let nestedURL = fixture.url.appending(path: "nested", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(
+      at: nestedURL,
+      withIntermediateDirectories: true
+    )
+    let imageURL = nestedURL.appending(path: "restored.png")
+    try makeImage(at: imageURL)
+    let repository = InMemoryAssetRepository()
+    let scanner = DirectoryScanner(repository: repository)
+    _ = try await scanner.scan(rootURL: fixture.url)
+    let asset = try #require(await repository.assets().first)
+
+    await repository.hideAsset(asset)
+    await repository.unhideAsset(at: imageURL)
+    _ = try await scanner.scan(scopeURL: nestedURL, under: fixture.url)
+
+    #expect(await repository.assets().map(\.url) == [imageURL.standardizedFileURL])
+  }
 }
 
 private struct DirectoryContentListerStub: DirectoryContentListing {

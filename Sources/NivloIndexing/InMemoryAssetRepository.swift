@@ -46,6 +46,15 @@ public actor InMemoryAssetRepository:
     storedEnrichments[asset.id] = nil
   }
 
+  public func hideAsset(at url: URL) {
+    let standardizedURL = url.standardizedFileURL
+    hiddenRecords[standardizedURL.path] = HiddenAssetRecord(
+      url: standardizedURL,
+      hiddenAt: Date(),
+      asset: nil
+    )
+  }
+
   public func unhideAsset(at url: URL) {
     hiddenRecords[url.standardizedFileURL.path] = nil
   }

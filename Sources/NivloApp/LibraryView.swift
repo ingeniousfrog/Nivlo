@@ -578,7 +578,9 @@ struct LibraryView: View {
               language: language,
               onRestore: {
                 Task {
-                  await model.unhideAsset(record)
+                  if let rootPath = await model.unhideAsset(record) {
+                    showRestoredAsset(in: rootPath)
+                  }
                 }
               }
             )
@@ -588,6 +590,17 @@ struct LibraryView: View {
       }
       .navigationTitle(language.hiddenFiles)
     }
+  }
+
+  private func showRestoredAsset(in rootPath: String) {
+    searchText = ""
+    folderFilter = rootPath
+    sourceFilter = nil
+    formatFilter = .all
+    timeFilter = .all
+    sizeFilter = .all
+    dimensionFilter = .all
+    selection = .allImages
   }
 
   private func chooseExportFolder() {

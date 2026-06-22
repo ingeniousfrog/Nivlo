@@ -245,24 +245,65 @@ final class LibraryModel: ObservableObject {
     }
   }
 
-  func unhideAsset(_ record: HiddenAssetRecord) async {
+  func unhideAsset(_ record: HiddenAssetRecord) async -> String? {
+    guard !isScanning else {
+      errorMessage = "Wait for the current folder scan to finish, then try again."
+      statusMessage = "Couldn’t restore asset while scanning"
+      return nil
+    }
     errorMessage = nil
+    let activeRoots = await rootAccessManager.activeURLs()
+    guard
+      FileManager.default.fileExists(atPath: record.url.path),
+      let root =
+        activeRoots
+        .filter({ record.url.isContained(in: $0) })
+        .max(by: { $0.path.count < $1.path.count })
+    else {
+      errorMessage =
+        "The original file or its indexed folder is unavailable. Reconnect the drive or add the folder again."
+      statusMessage = "Couldn’t restore hidden asset"
+      return nil
+    }
+
+    isScanning = true
+    statusMessage = "Restoring \(record.url.lastPathComponent)…"
     do {
       try await repository.unhideAsset(at: record.url)
-      hiddenAssets = try await repository.hiddenAssets()
+      _ = try await scanner.scan(
+        scopeURL: record.url.deletingLastPathComponent(),
+        under: root
+      )
+      assets = try await repository.assets()
       guard
-        let root = await rootAccessManager.activeURLs()
-          .filter({ record.url.isContained(in: $0) })
-          .max(by: { $0.path.count < $1.path.count })
+        assets.contains(where: {
+          $0.url.standardizedFileURL == record.url.standardizedFileURL
+        })
       else {
-        statusMessage = "Asset unhidden · add its folder again to reindex it"
-        return
+        throw LibraryModelError.restoredAssetMissing(record.url)
       }
-      await scanActiveRoot(root)
+      hiddenAssets = try await repository.hiddenAssets()
+      enrichments = Dictionary(
+        uniqueKeysWithValues: try await repository.enrichments()
+          .map { ($0.assetID, $0) }
+      )
+      updateSimilarityGroups()
+      isScanning = false
       statusMessage = "\(assets.count) images indexed · restored \(record.url.lastPathComponent)"
+      await enrichAccessibleAssets()
+      return root.standardizedFileURL.path
     } catch {
+      if let asset = record.asset {
+        try? await repository.hideAsset(asset)
+      } else {
+        try? await repository.hideAsset(at: record.url)
+      }
+      assets = (try? await repository.assets()) ?? assets
+      hiddenAssets = (try? await repository.hiddenAssets()) ?? hiddenAssets
+      isScanning = false
       errorMessage = error.localizedDescription
       statusMessage = "Couldn’t restore hidden asset"
+      return nil
     }
   }
 
@@ -484,8 +525,14 @@ extension ImageAsset {
 
 private enum LibraryModelError: Error, LocalizedError {
   case applicationSupportUnavailable
+  case restoredAssetMissing(URL)
 
   var errorDescription: String? {
-    "The macOS Application Support directory is unavailable."
+    switch self {
+    case .applicationSupportUnavailable:
+      "The macOS Application Support directory is unavailable."
+    case .restoredAssetMissing(let url):
+      "Nivlo could not add \(url.lastPathComponent) back to the index."
+    }
   }
 }

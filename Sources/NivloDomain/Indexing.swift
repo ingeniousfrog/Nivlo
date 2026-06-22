@@ -28,6 +28,7 @@ public protocol AssetRepository: Sendable {
   func hiddenAssets() async throws -> [HiddenAssetRecord]
   func hiddenAssetPaths(in rootURL: URL) async throws -> Set<String>
   func hideAsset(_ asset: ImageAsset) async throws
+  func hideAsset(at url: URL) async throws
   func unhideAsset(at url: URL) async throws
   func upsertAssets(_ assets: [ImageAsset], in rootURL: URL) async throws
   func replaceAssets(in rootURL: URL, with assets: [ImageAsset]) async throws -> Int

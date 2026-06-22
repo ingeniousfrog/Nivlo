@@ -227,6 +227,18 @@ public actor SQLiteAssetRepository:
     }
   }
 
+  public func hideAsset(at url: URL) throws {
+    let sql = """
+      INSERT OR REPLACE INTO hidden_assets(path, hidden_at)
+      VALUES (?, ?);
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    try bind(url.standardizedFileURL.path, at: 1, to: statement, sql: sql)
+    sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+    try stepToCompletion(statement, sql: sql)
+  }
+
   public func unhideAsset(at url: URL) throws {
     let path = url.standardizedFileURL.path
     try execute("BEGIN IMMEDIATE TRANSACTION;")
