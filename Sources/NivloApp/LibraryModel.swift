@@ -28,6 +28,7 @@ final class LibraryModel: ObservableObject {
   @Published private(set) var spotlightDiscoveryState: SpotlightDiscoveryState = .checking
   @Published private(set) var validationStatusMessage = "Validation idle"
   @Published private(set) var processingStatusMessage = "Processing idle"
+  @Published private(set) var lineageByAssetID: [AssetID: AssetLineageGraph] = [:]
   @Published var errorMessage: String?
 
   private let repository:
@@ -40,6 +41,7 @@ final class LibraryModel: ObservableObject {
   private let validationScheduler: IndexValidationScheduler
   private let batchProcessor = ImageBatchProcessor()
   private let spotlightSource = SpotlightCandidateSource()
+  let toolBootstrapper = ToolBootstrapper.shared
 
   init() {
     let dependencies = Self.makeDependencies()
@@ -61,6 +63,7 @@ final class LibraryModel: ObservableObject {
   }
 
   func loadLibrary() async {
+    toolBootstrapper.ensureToolsReady()
     do {
       let restoration = await rootAccessManager.restore()
       roots = try await repository.libraryRoots()
@@ -228,6 +231,110 @@ final class LibraryModel: ObservableObject {
       processingStatusMessage = "Exported \(outputs.count) images"
     } catch {
       processingStatusMessage = "Export failed"
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func lineage(for asset: ImageAsset) async -> AssetLineageGraph {
+    if let cached = lineageByAssetID[asset.id] {
+      return cached
+    }
+    do {
+      let records = try await repository.processingHistory(for: asset.id)
+      let graph = AssetLineageBuilder.graph(for: asset.id, records: records)
+      lineageByAssetID[asset.id] = graph
+      return graph
+    } catch {
+      return AssetLineageGraph(assetID: asset.id, records: [])
+    }
+  }
+
+  func recordEditedImageExport(
+    asset: ImageAsset,
+    result: PicxOptimizeResult,
+    request: ImageEditRequest,
+    parentRecordID: UUID? = nil
+  ) async {
+    let record = ProcessingHistoryRecord(
+      id: UUID(),
+      sourceAssetID: asset.id,
+      operation: .edit,
+      outputURL: result.outputURL,
+      parameters: [
+        "tool": "picx",
+        "format": request.format.rawValue,
+        "quality": String(request.quality),
+        "savingsRatio": String(format: "%.3f", result.savingsRatio),
+        "originalSize": String(result.originalSize),
+        "outputSize": String(result.outputSize),
+      ],
+      createdAt: Date(),
+      parentRecordID: parentRecordID,
+      derivativeKind: .edit
+    )
+    await appendHistoryRecords([record], assetID: asset.id)
+  }
+
+  func recordEditedVideoExport(
+    asset: ImageAsset,
+    outputURL: URL,
+    request: VideoEditRequest,
+    parentRecordID: UUID? = nil
+  ) async {
+    let operation: ProcessingOperation = request.extractAudioOnly ? .audioExtract : .videoEdit
+    let record = ProcessingHistoryRecord(
+      id: UUID(),
+      sourceAssetID: asset.id,
+      operation: operation,
+      outputURL: outputURL,
+      parameters: [
+        "tool": "ffmpeg",
+        "startSeconds": String(request.trimRange.startSeconds),
+        "endSeconds": String(request.trimRange.endSeconds),
+        "extractAudioOnly": request.extractAudioOnly ? "true" : "false",
+        "outputFormat": request.outputFormat.rawValue,
+      ],
+      createdAt: Date(),
+      parentRecordID: parentRecordID,
+      derivativeKind: .delivery
+    )
+    await appendHistoryRecords([record], assetID: asset.id)
+  }
+
+  func recordAIGeneration(
+    asset: ImageAsset,
+    result: GenerationResult,
+    parentRecordID: UUID? = nil
+  ) async {
+    let record = ProcessingHistoryRecord(
+      id: UUID(),
+      sourceAssetID: asset.id,
+      operation: .aiGenerate,
+      outputURL: result.outputURL,
+      parameters: result.parameters.merging([
+        "provider": result.providerID,
+        "model": result.model,
+      ]) { current, _ in current },
+      createdAt: Date(),
+      parentRecordID: parentRecordID,
+      derivativeKind: .aiVariant
+    )
+    await appendHistoryRecords([record], assetID: asset.id)
+  }
+
+  private func appendHistoryRecords(
+    _ records: [ProcessingHistoryRecord],
+    assetID: AssetID
+  ) async {
+    do {
+      try await repository.appendProcessingHistory(records)
+      let updated = try await repository.processingHistory(for: assetID)
+      lineageByAssetID[assetID] = AssetLineageBuilder.graph(
+        for: assetID,
+        records: updated
+      )
+      processingStatusMessage = "Recorded \(records.count) derivative(s)"
+    } catch {
       errorMessage = error.localizedDescription
     }
   }

@@ -1,19 +1,44 @@
 import AppKit
-import CoreImage
-import ImageIO
 import NivloDomain
+import NivloImaging
 import SwiftUI
 import UniformTypeIdentifiers
+
+private enum ImageEditorTab: String, CaseIterable, Identifiable {
+  case geometry
+  case adjust
+  case annotate
+  case mask
+  case export
+
+  var id: String { rawValue }
+}
 
 struct AssetEditorView: View {
   let asset: ImageAsset
   let language: NivloLanguage
+  let toolsReady: Bool
+  let onExport: (PicxOptimizeResult, ImageEditRequest) -> Void
 
   @Environment(\.dismiss) private var dismiss
+  @State private var selectedTab: ImageEditorTab = .geometry
+  @State private var cropRect = NormalizedCropRect.full
   @State private var quarterTurns = 0
   @State private var isFlippedHorizontally = false
+  @State private var adjustments = ImageAdjustmentSettings.neutral
+  @State private var annotations: [ImageAnnotation] = []
+  @State private var maskStrokes: [MaskStroke] = []
+  @State private var layers = EditorLayer.defaults
+  @State private var outputFormat: PicxOutputFormat = .webp
+  @State private var quality = 82.0
+  @State private var preset: PicxPreset = .web
+  @State private var maxWidth = ""
+  @State private var maxHeight = ""
+  @State private var targetSizeKB = ""
   @State private var exportMessage: String?
   @State private var isExporting = false
+
+  private let pipeline = ImageEditPipeline()
 
   private var canEdit: Bool {
     UTType(asset.contentType)?.conforms(to: .image) == true
@@ -23,26 +48,12 @@ struct AssetEditorView: View {
     VStack(spacing: 0) {
       toolbar
       Divider()
-      ZStack {
-        Color(nsColor: .windowBackgroundColor)
-        if canEdit {
-          AssetImageView(
-            asset: asset,
-            enrichment: nil,
-            maxPixelSize: 1_600,
-            contentMode: .fit
-          )
-          .rotationEffect(.degrees(Double(quarterTurns * 90)))
-          .scaleEffect(x: isFlippedHorizontally ? -1 : 1, y: 1)
-          .padding(32)
-          .animation(.snappy, value: quarterTurns)
-          .animation(.snappy, value: isFlippedHorizontally)
-        } else {
-          ContentUnavailableView(
-            "Preview unavailable",
-            systemImage: "photo.badge.exclamationmark"
-          )
-        }
+      HStack(spacing: 0) {
+        editorCanvas
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Divider()
+        inspector
+          .frame(width: 300)
       }
       if let exportMessage {
         Text(exportMessage)
@@ -51,7 +62,7 @@ struct AssetEditorView: View {
           .padding(.vertical, 8)
       }
     }
-    .frame(minWidth: 900, minHeight: 680)
+    .frame(minWidth: 1_000, minHeight: 720)
   }
 
   private var toolbar: some View {
@@ -64,35 +75,11 @@ struct AssetEditorView: View {
           .foregroundStyle(.secondary)
       }
       Spacer()
-      Button {
-        quarterTurns = normalizedQuarterTurns(quarterTurns - 1)
-      } label: {
-        Label(language.rotateLeft, systemImage: "rotate.left")
+      if !toolsReady {
+        Label(language.toolsNotReady, systemImage: "wrench.and.screwdriver")
+          .font(.caption)
+          .foregroundStyle(.orange)
       }
-      Button {
-        quarterTurns = normalizedQuarterTurns(quarterTurns + 1)
-      } label: {
-        Label(language.rotateRight, systemImage: "rotate.right")
-      }
-      Button {
-        isFlippedHorizontally.toggle()
-      } label: {
-        Label(
-          language.flipHorizontal,
-          systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-      }
-      Button(language.reset) {
-        quarterTurns = 0
-        isFlippedHorizontally = false
-      }
-      .disabled(quarterTurns == 0 && !isFlippedHorizontally)
-      Button {
-        exportEditedCopy()
-      } label: {
-        Label(language.saveEditedCopy, systemImage: "square.and.arrow.up")
-      }
-      .buttonStyle(.borderedProminent)
-      .disabled(!canEdit || isExporting)
       Button {
         dismiss()
       } label: {
@@ -105,12 +92,214 @@ struct AssetEditorView: View {
     .padding(16)
   }
 
+  private var editorCanvas: some View {
+    ZStack {
+      Color(nsColor: .windowBackgroundColor)
+      if canEdit {
+        AssetImageView(
+          asset: asset,
+          enrichment: nil,
+          maxPixelSize: 1_600,
+          contentMode: .fit
+        )
+        .rotationEffect(.degrees(Double(quarterTurns * 90)))
+        .scaleEffect(x: isFlippedHorizontally ? -1 : 1, y: 1)
+        .overlay {
+          if selectedTab == .geometry {
+            CropOverlayView(cropRect: $cropRect)
+          }
+        }
+        .padding(32)
+        .animation(.snappy, value: quarterTurns)
+        .animation(.snappy, value: isFlippedHorizontally)
+      } else {
+        ContentUnavailableView(
+          "Preview unavailable",
+          systemImage: "photo.badge.exclamationmark"
+        )
+      }
+    }
+  }
+
+  private var inspector: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Picker("Tab", selection: $selectedTab) {
+        Text(language.tabGeometry).tag(ImageEditorTab.geometry)
+        Text(language.tabAdjust).tag(ImageEditorTab.adjust)
+        Text(language.tabAnnotate).tag(ImageEditorTab.annotate)
+        Text(language.tabMask).tag(ImageEditorTab.mask)
+        Text(language.tabExport).tag(ImageEditorTab.export)
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+
+      ScrollView {
+        switch selectedTab {
+        case .geometry:
+          geometryControls
+        case .adjust:
+          adjustControls
+        case .annotate:
+          annotateControls
+        case .mask:
+          maskControls
+        case .export:
+          exportControls
+        }
+      }
+      Spacer()
+    }
+    .padding(16)
+  }
+
+  private var geometryControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Button { quarterTurns = normalizedQuarterTurns(quarterTurns - 1) } label: {
+        Label(language.rotateLeft, systemImage: "rotate.left")
+      }
+      Button { quarterTurns = normalizedQuarterTurns(quarterTurns + 1) } label: {
+        Label(language.rotateRight, systemImage: "rotate.right")
+      }
+      Button { isFlippedHorizontally.toggle() } label: {
+        Label(language.flipHorizontal, systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+      }
+      Button(language.reset) {
+        cropRect = .full
+        quarterTurns = 0
+        isFlippedHorizontally = false
+      }
+    }
+  }
+
+  private var adjustControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      sliderRow(language.adjustExposure, value: $adjustments.exposure, range: -1...1)
+      sliderRow(language.adjustContrast, value: $adjustments.contrast, range: -0.5...0.5)
+      sliderRow(language.adjustSaturation, value: $adjustments.saturation, range: -0.5...0.5)
+      sliderRow(language.adjustWarmth, value: $adjustments.warmth, range: -1...1)
+    }
+  }
+
+  private var annotateControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Button(language.addTextAnnotation) {
+        annotations.append(
+          ImageAnnotation(
+            kind: .text,
+            text: "Note",
+            normalizedRect: NormalizedCropRect(x: 0.1, y: 0.1, width: 0.3, height: 0.1)
+          )
+        )
+      }
+      Button(language.addRectangleAnnotation) {
+        annotations.append(
+          ImageAnnotation(
+            kind: .rectangle,
+            normalizedRect: NormalizedCropRect(x: 0.2, y: 0.2, width: 0.3, height: 0.2)
+          )
+        )
+      }
+      Button(language.addArrowAnnotation) {
+        annotations.append(
+          ImageAnnotation(
+            kind: .arrow,
+            normalizedRect: NormalizedCropRect(x: 0.15, y: 0.15, width: 0.35, height: 0.35)
+          )
+        )
+      }
+      if !annotations.isEmpty {
+        Button(language.clearAnnotations, role: .destructive) {
+          annotations.removeAll()
+        }
+      }
+      Text("\(language.annotationCount): \(annotations.count)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var maskControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      ForEach($layers) { $layer in
+        Toggle(layerTitle(layer.kind), isOn: $layer.isVisible)
+      }
+      Button(language.addMaskStroke) {
+        maskStrokes.append(
+          MaskStroke(
+            normalizedRect: NormalizedCropRect(x: 0.35, y: 0.35, width: 0.2, height: 0.2)
+          )
+        )
+      }
+      if !maskStrokes.isEmpty {
+        Button(language.clearMask, role: .destructive) {
+          maskStrokes.removeAll()
+        }
+      }
+      Text("\(language.maskStrokeCount): \(maskStrokes.count)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private func layerTitle(_ kind: EditorLayerKind) -> String {
+    switch kind {
+    case .background:
+      language.layerBackground
+    case .adjustments:
+      language.layerAdjustments
+    case .annotations:
+      language.layerAnnotations
+    case .mask:
+      language.layerMask
+    }
+  }
+
+  private var exportControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Picker(language.exportFormat, selection: $outputFormat) {
+        ForEach(PicxOutputFormat.allCases, id: \.self) { format in
+          Text(format.rawValue.uppercased()).tag(format)
+        }
+      }
+      Picker(language.exportPreset, selection: $preset) {
+        ForEach(PicxPreset.allCases, id: \.self) { item in
+          Text(item.rawValue).tag(item)
+        }
+      }
+      Slider(value: $quality, in: 1...100, step: 1) {
+        Text("\(language.exportQuality): \(Int(quality))")
+      }
+      TextField(language.maxWidth, text: $maxWidth)
+      TextField(language.maxHeight, text: $maxHeight)
+      TextField(language.targetSizeKB, text: $targetSizeKB)
+      Button {
+        exportEditedCopy()
+      } label: {
+        Label(language.saveEditedCopy, systemImage: "square.and.arrow.up")
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(!canEdit || isExporting || !toolsReady)
+    }
+  }
+
+  private func sliderRow(
+    _ title: String,
+    value: Binding<Double>,
+    range: ClosedRange<Double>
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.caption)
+      Slider(value: value, in: range)
+    }
+  }
+
   private func exportEditedCopy() {
     let panel = NSSavePanel()
     panel.title = language.saveEditedCopy
     panel.nameFieldStringValue =
-      "\(asset.url.deletingPathExtension().lastPathComponent)-edited.png"
-    panel.allowedContentTypes = [.png]
+      "\(asset.url.deletingPathExtension().lastPathComponent)-edited.\(outputFormat.rawValue)"
+    panel.allowedContentTypes = [uti(for: outputFormat)]
     guard panel.runModal() == .OK, let outputURL = panel.url else {
       return
     }
@@ -119,22 +308,31 @@ struct AssetEditorView: View {
       return
     }
 
+    let request = ImageEditRequest(
+      sourceURL: asset.url,
+      outputURL: outputURL,
+      cropRect: cropRect.clamped(),
+      quarterTurns: quarterTurns,
+      flippedHorizontally: isFlippedHorizontally,
+      adjustments: adjustments,
+      annotations: annotations,
+      maskStrokes: maskStrokes,
+      layers: layers,
+      format: outputFormat,
+      quality: Int(quality),
+      preset: preset,
+      maxWidth: Int(maxWidth),
+      maxHeight: Int(maxHeight),
+      targetSizeBytes: Int(targetSizeKB).map { $0 * 1_024 }
+    )
+
     isExporting = true
     exportMessage = nil
-    let sourceURL = asset.url
-    let turns = quarterTurns
-    let flipped = isFlippedHorizontally
     Task {
       do {
-        try await Task.detached(priority: .userInitiated) {
-          try EditedImageExporter.exportPNG(
-            sourceURL: sourceURL,
-            outputURL: outputURL,
-            quarterTurns: turns,
-            flippedHorizontally: flipped
-          )
-        }.value
-        exportMessage = language.editorExported
+        let result = try await pipeline.export(request)
+        exportMessage = "\(language.editorExported) · \(formattedBytes(result.outputSize))"
+        onExport(result, request)
       } catch {
         exportMessage = "\(language.editorExportFailed): \(error.localizedDescription)"
       }
@@ -142,73 +340,55 @@ struct AssetEditorView: View {
     }
   }
 
+  private func uti(for format: PicxOutputFormat) -> UTType {
+    switch format {
+    case .webp:
+      UTType(filenameExtension: "webp") ?? .data
+    case .avif:
+      UTType(filenameExtension: "avif") ?? .data
+    case .jpg:
+      .jpeg
+    case .png:
+      .png
+    }
+  }
+
+  private func formattedBytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+  }
+
   private func normalizedQuarterTurns(_ value: Int) -> Int {
     (value % 4 + 4) % 4
   }
 }
 
-private enum EditedImageExporter {
-  static func exportPNG(
-    sourceURL: URL,
-    outputURL: URL,
-    quarterTurns: Int,
-    flippedHorizontally: Bool
-  ) throws {
-    guard var image = CIImage(contentsOf: sourceURL) else {
-      throw AssetEditorError.unreadableImage
-    }
+private struct CropOverlayView: View {
+  @Binding var cropRect: NormalizedCropRect
 
-    let center = CGPoint(x: image.extent.midX, y: image.extent.midY)
-    var transform = CGAffineTransform(translationX: center.x, y: center.y)
-    if flippedHorizontally {
-      transform = transform.scaledBy(x: -1, y: 1)
-    }
-    transform = transform.rotated(by: CGFloat(quarterTurns) * .pi / 2)
-    transform = transform.translatedBy(x: -center.x, y: -center.y)
-    image = image.transformed(by: transform)
-
-    let extent = image.extent.integral
-    image = image.transformed(
-      by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
-    )
-    let outputExtent = image.extent.integral
-    let context = CIContext(options: [.useSoftwareRenderer: false])
-    guard let cgImage = context.createCGImage(image, from: outputExtent) else {
-      throw AssetEditorError.renderFailed
-    }
-    guard
-      let destination = CGImageDestinationCreateWithURL(
-        outputURL as CFURL,
-        UTType.png.identifier as CFString,
-        1,
-        nil
+  var body: some View {
+    GeometryReader { proxy in
+      let rect = CGRect(
+        x: cropRect.x * proxy.size.width,
+        y: cropRect.y * proxy.size.height,
+        width: cropRect.width * proxy.size.width,
+        height: cropRect.height * proxy.size.height
       )
-    else {
-      throw AssetEditorError.destinationUnavailable
-    }
-    CGImageDestinationAddImage(destination, cgImage, nil)
-    guard CGImageDestinationFinalize(destination) else {
-      throw AssetEditorError.writeFailed
-    }
-  }
-}
-
-private enum AssetEditorError: Error, LocalizedError {
-  case unreadableImage
-  case renderFailed
-  case destinationUnavailable
-  case writeFailed
-
-  var errorDescription: String? {
-    switch self {
-    case .unreadableImage:
-      "The image could not be read."
-    case .renderFailed:
-      "The edited image could not be rendered."
-    case .destinationUnavailable:
-      "The export destination could not be created."
-    case .writeFailed:
-      "The edited image could not be written."
+      ZStack {
+        Rectangle()
+          .strokeBorder(.yellow, lineWidth: 2)
+          .background(.yellow.opacity(0.08))
+          .frame(width: rect.width, height: rect.height)
+          .position(x: rect.midX, y: rect.midY)
+          .gesture(
+            DragGesture()
+              .onChanged { value in
+                let nx = min(max(0, value.location.x / proxy.size.width - cropRect.width / 2), 1 - cropRect.width)
+                let ny = min(max(0, value.location.y / proxy.size.height - cropRect.height / 2), 1 - cropRect.height)
+                cropRect.x = nx
+                cropRect.y = ny
+              }
+          )
+      }
     }
   }
 }

@@ -391,15 +391,17 @@ public actor SQLiteAssetRepository:
     let sql = """
       INSERT INTO processing_history (
           id, volume_id, file_id, operation, output_path,
-          parameters_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          parameters_json, created_at, parent_record_id, derivative_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
           volume_id = excluded.volume_id,
           file_id = excluded.file_id,
           operation = excluded.operation,
           output_path = excluded.output_path,
           parameters_json = excluded.parameters_json,
-          created_at = excluded.created_at;
+          created_at = excluded.created_at,
+          parent_record_id = excluded.parent_record_id,
+          derivative_kind = excluded.derivative_kind;
       """
     let statement = try prepare(sql)
     defer { sqlite3_finalize(statement) }
@@ -415,6 +417,12 @@ public actor SQLiteAssetRepository:
         try bind(record.outputURL.standardizedFileURL.path, at: 5, to: statement, sql: sql)
         try bind(try JSONEncoder().encode(record.parameters), at: 6, to: statement, sql: sql)
         sqlite3_bind_double(statement, 7, record.createdAt.timeIntervalSince1970)
+        if let parentRecordID = record.parentRecordID {
+          try bind(parentRecordID.uuidString, at: 8, to: statement, sql: sql)
+        } else {
+          sqlite3_bind_null(statement, 8)
+        }
+        try bind(record.derivativeKind.rawValue, at: 9, to: statement, sql: sql)
         try stepToCompletion(statement, sql: sql)
       }
       try execute("COMMIT;")
@@ -429,7 +437,7 @@ public actor SQLiteAssetRepository:
   ) throws -> [ProcessingHistoryRecord] {
     let sql = """
       SELECT id, volume_id, file_id, operation, output_path,
-             parameters_json, created_at
+             parameters_json, created_at, parent_record_id, derivative_kind
       FROM processing_history
       WHERE volume_id = ? AND file_id = ?
       ORDER BY created_at ASC, id ASC;
@@ -828,6 +836,18 @@ public actor SQLiteAssetRepository:
       [String: String].self,
       from: data(at: 5, from: statement)
     )
+    let parentRecordID: UUID?
+    if sqlite3_column_type(statement, 7) == SQLITE_NULL {
+      parentRecordID = nil
+    } else {
+      let parentIDString = text(at: 7, from: statement)
+      parentRecordID = UUID(uuidString: parentIDString)
+    }
+    let derivativeKindText = sqlite3_column_type(statement, 8) == SQLITE_NULL
+      ? DerivativeKind.delivery.rawValue
+      : text(at: 8, from: statement)
+    let derivativeKind = DerivativeKind(rawValue: derivativeKindText) ?? .delivery
+
     return ProcessingHistoryRecord(
       id: id,
       sourceAssetID: AssetID(
@@ -837,7 +857,9 @@ public actor SQLiteAssetRepository:
       operation: operation,
       outputURL: URL(filePath: text(at: 4, from: statement)),
       parameters: parameters,
-      createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))
+      createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)),
+      parentRecordID: parentRecordID,
+      derivativeKind: derivativeKind
     )
   }
 
@@ -1130,6 +1152,44 @@ public actor SQLiteAssetRepository:
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
         """
     )
+    try applyMigration8(database)
+  }
+
+  private static func applyMigration8(_ database: OpaquePointer) throws {
+    guard !hasMigration(database, version: 8) else {
+      return
+    }
+    try execute(
+      database,
+      sql: """
+        ALTER TABLE processing_history
+        ADD COLUMN parent_record_id TEXT;
+
+        ALTER TABLE processing_history
+        ADD COLUMN derivative_kind TEXT NOT NULL DEFAULT 'delivery';
+
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
+        """
+    )
+  }
+
+  private static func hasMigration(_ database: OpaquePointer, version: Int) -> Bool {
+    var statement: OpaquePointer?
+    guard
+      sqlite3_prepare_v2(
+        database,
+        "SELECT 1 FROM schema_migrations WHERE version = ? LIMIT 1;",
+        -1,
+        &statement,
+        nil
+      ) == SQLITE_OK,
+      let statement
+    else {
+      return false
+    }
+    defer { sqlite3_finalize(statement) }
+    sqlite3_bind_int(statement, 1, Int32(version))
+    return sqlite3_step(statement) == SQLITE_ROW
   }
 
   private static func execute(

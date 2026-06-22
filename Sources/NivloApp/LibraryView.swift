@@ -1,5 +1,6 @@
 import AppKit
 import NivloDomain
+import NivloImaging
 import NivloIndexing
 import SwiftUI
 import UniformTypeIdentifiers
@@ -143,6 +144,69 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var videoExported: String { text("Trimmed video exported", "裁剪视频已导出") }
   var videoExportFailed: String { text("Couldn’t export video", "无法导出视频") }
   var videoPreviewUnavailable: String { text("Video preview unavailable", "视频无法预览") }
+  var toolsStatusTitle: String { text("Processing tools", "处理工具") }
+  var toolsNotReady: String { text("Tools are still installing", "工具仍在安装中") }
+  var retry: String { text("Retry", "重试") }
+  var tabGeometry: String { text("Geometry", "几何") }
+  var tabAdjust: String { text("Adjust", "调整") }
+  var tabAnnotate: String { text("Annotate", "标注") }
+  var tabMask: String { text("Mask", "蒙版") }
+  var tabExport: String { text("Export", "导出") }
+  var tabTransform: String { text("Transform", "形变") }
+  var tabLineage: String { text("Lineage", "谱系") }
+  var tabAI: String { text("AI", "AI") }
+  var adjustExposure: String { text("Exposure", "曝光") }
+  var adjustContrast: String { text("Contrast", "对比度") }
+  var adjustSaturation: String { text("Saturation", "饱和度") }
+  var adjustWarmth: String { text("Warmth", "色温") }
+  var addTextAnnotation: String { text("Add text", "添加文字") }
+  var addRectangleAnnotation: String { text("Add rectangle", "添加矩形") }
+  var addArrowAnnotation: String { text("Add arrow", "添加箭头") }
+  var clearAnnotations: String { text("Clear annotations", "清除标注") }
+  var annotationCount: String { text("Annotations", "标注数") }
+  var addMaskStroke: String { text("Add mask brush", "添加蒙版笔触") }
+  var clearMask: String { text("Clear mask", "清除蒙版") }
+  var maskStrokeCount: String { text("Mask strokes", "蒙版笔触数") }
+  var layerBackground: String { text("Background layer", "背景层") }
+  var layerAdjustments: String { text("Adjustments layer", "调整层") }
+  var layerAnnotations: String { text("Annotations layer", "标注层") }
+  var layerMask: String { text("Mask layer", "蒙版层") }
+  var exportFormat: String { text("Format", "格式") }
+  var exportPreset: String { text("Preset", "预设") }
+  var exportQuality: String { text("Quality", "质量") }
+  var maxWidth: String { text("Max width", "最大宽度") }
+  var maxHeight: String { text("Max height", "最大高度") }
+  var targetSizeKB: String { text("Target size (KB)", "目标大小 (KB)") }
+  var cropX: String { text("Crop X", "裁切 X") }
+  var cropY: String { text("Crop Y", "裁切 Y") }
+  var cropWidth: String { text("Crop width", "裁切宽度") }
+  var cropHeight: String { text("Crop height", "裁切高度") }
+  var scaleWidth: String { text("Scale width", "缩放宽度") }
+  var scaleHeight: String { text("Scale height", "缩放高度") }
+  var rotateVideo: String { text("Rotate (90° steps)", "旋转 (90°)") }
+  var outputFPS: String { text("Output FPS", "输出帧率") }
+  var videoCRF: String { text("CRF", "CRF") }
+  var extractAudioOnly: String { text("Extract audio only", "仅提取音频") }
+  var audioFormat: String { text("Audio format", "音频格式") }
+  var noLineageTitle: String { text("No derivatives yet", "尚无衍生文件") }
+  var noLineageDescription: String {
+    text(
+      "Exports, edits, and AI generations for this asset will appear here.",
+      "此素材的导出、编辑和 AI 生成记录会显示在这里。"
+    )
+  }
+  var aiProvider: String { text("Provider", "提供方") }
+  var aiAPIKey: String { text("API key", "API 密钥") }
+  var aiCapability: String { text("Capability", "能力") }
+  var aiPrompt: String { text("Prompt", "提示词") }
+  var aiNegativePrompt: String { text("Negative prompt", "反向提示词") }
+  var aiStrength: String { text("Strength", "强度") }
+  var aiSteps: String { text("Steps", "步数") }
+  var aiGenerate: String { text("Generate", "生成") }
+  var aiGenerating: String { text("Generating…", "正在生成…") }
+  var aiGenerated: String { text("Generation complete", "生成完成") }
+  var saveAPIKey: String { text("Save API key", "保存 API 密钥") }
+  var apiKeySaved: String { text("API key saved", "API 密钥已保存") }
 
   func hideAssetMessage(_ filename: String) -> String {
     text(
@@ -347,6 +411,7 @@ struct LibraryView: View {
         enrichment: model.enrichments[asset.id],
         language: language,
         isSelected: selectedAssetIDs.contains(asset.id),
+        toolsReady: model.toolBootstrapper.isReady,
         onToggleSelection: {
           toggleSelection(asset.id)
         },
@@ -355,6 +420,32 @@ struct LibraryView: View {
         },
         onHide: {
           hideAsset(asset)
+        },
+        onImageExported: { result, request in
+          Task {
+            await model.recordEditedImageExport(
+              asset: asset,
+              result: result,
+              request: request
+            )
+          }
+        },
+        onVideoExported: { outputURL, request in
+          Task {
+            await model.recordEditedVideoExport(
+              asset: asset,
+              outputURL: outputURL,
+              request: request
+            )
+          }
+        },
+        onAIGenerated: { result in
+          Task {
+            await model.recordAIGeneration(asset: asset, result: result)
+          }
+        },
+        lineageProvider: {
+          await model.lineage(for: asset)
         }
       )
     }
@@ -1068,20 +1159,35 @@ private struct HiddenAssetCard: View {
   }
 }
 
+private enum AssetPreviewSidebarTab: String, CaseIterable, Identifiable {
+  case inspector
+  case lineage
+  case ai
+
+  var id: String { rawValue }
+}
+
 private struct AssetPreviewPanel: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
   let language: NivloLanguage
   let isSelected: Bool
+  let toolsReady: Bool
   let onToggleSelection: () -> Void
   let onExport: () -> Void
   let onHide: () -> Void
+  let onImageExported: (PicxOptimizeResult, ImageEditRequest) -> Void
+  let onVideoExported: (URL, VideoEditRequest) -> Void
+  let onAIGenerated: (GenerationResult) -> Void
+  let lineageProvider: () async -> AssetLineageGraph
 
   @Environment(\.dismiss) private var dismiss
   @State private var isEditorPresented = false
   @State private var isHideConfirmationPresented = false
   @State private var copyFeedback: CopyFeedback?
   @State private var copyFeedbackTask: Task<Void, Never>?
+  @State private var sidebarTab: AssetPreviewSidebarTab = .inspector
+  @State private var lineageGraph = AssetLineageGraph(assetID: AssetID(volumeIdentifier: "", fileIdentifier: ""), records: [])
 
   private var details: AssetPreviewDetails {
     AssetPreviewDetails(asset: asset)
@@ -1150,26 +1256,56 @@ private struct AssetPreviewPanel: View {
         Divider()
 
         VStack(alignment: .leading, spacing: 14) {
-          Text(language.inspector)
-            .font(.headline)
-          detailRow(language.format, details.format)
-          detailRow(language.dimensions, details.dimensions)
-          detailRow(language.size, details.fileSize)
-          pathRow(details.path)
+          Picker("Sidebar", selection: $sidebarTab) {
+            Text(language.inspector).tag(AssetPreviewSidebarTab.inspector)
+            Text(language.tabLineage).tag(AssetPreviewSidebarTab.lineage)
+            Text(language.tabAI).tag(AssetPreviewSidebarTab.ai)
+          }
+          .pickerStyle(.segmented)
+
+          switch sidebarTab {
+          case .inspector:
+            detailRow(language.format, details.format)
+            detailRow(language.dimensions, details.dimensions)
+            detailRow(language.size, details.fileSize)
+            pathRow(details.path)
+          case .lineage:
+            LineageView(graph: lineageGraph, language: language)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          case .ai:
+            AIGenerationPanel(
+              asset: asset,
+              language: language,
+              onGenerated: onAIGenerated
+            )
+          }
 
           Spacer()
         }
         .padding(18)
-        .frame(width: 248)
+        .frame(width: 320)
       }
     }
-    .frame(minWidth: 1_020, minHeight: 680)
+    .frame(minWidth: 1_080, minHeight: 680)
+    .task(id: asset.id) {
+      lineageGraph = await lineageProvider()
+    }
     .sheet(isPresented: $isEditorPresented) {
       switch asset.mediaKind {
       case .image:
-        AssetEditorView(asset: asset, language: language)
+        AssetEditorView(
+          asset: asset,
+          language: language,
+          toolsReady: toolsReady,
+          onExport: onImageExported
+        )
       case .video:
-        VideoEditorView(asset: asset, language: language)
+        VideoEditorView(
+          asset: asset,
+          language: language,
+          toolsReady: toolsReady,
+          onExport: onVideoExported
+        )
       case .unsupported:
         ContentUnavailableView(
           language.videoPreviewUnavailable,

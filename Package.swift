@@ -22,7 +22,10 @@ let package = Package(
     ),
     .target(
       name: "NivloImaging",
-      dependencies: ["NivloDomain"]
+      dependencies: ["NivloDomain"],
+      linkerSettings: [
+        .linkedFramework("AppKit")
+      ]
     ),
     .target(
       name: "NivloPersistence",

@@ -1,0 +1,58 @@
+import Foundation
+import NivloDomain
+import Testing
+
+@testable import NivloImaging
+
+@Suite("FFmpeg command builder")
+struct FFmpegCommandBuilderTests {
+  @Test("builds trim and scale command")
+  func buildsTrimAndScaleCommand() {
+    let request = VideoEditRequest(
+      sourceURL: URL(filePath: "/tmp/input.mp4"),
+      outputURL: URL(filePath: "/tmp/output.mp4"),
+      trimRange: VideoTrimRange(
+        startSeconds: 1,
+        endSeconds: 5,
+        durationSeconds: 10
+      ),
+      cropRect: VideoCropRect(x: 10, y: 20, width: 640, height: 360),
+      scaleWidth: 1280,
+      scaleHeight: 720,
+      transposeQuarterTurns: 1,
+      outputFPS: 30,
+      crf: 24
+    )
+    let command = FFmpegCommandBuilder.build(
+      request: request,
+      ffmpegExecutable: URL(filePath: "/usr/local/bin/ffmpeg")
+    )
+    #expect(command.arguments.contains("-ss"))
+    #expect(command.arguments.joined(separator: " ").contains("crop=640:360:10:20"))
+    #expect(command.arguments.joined(separator: " ").contains("scale=1280:720"))
+    #expect(command.arguments.joined(separator: " ").contains("transpose=1"))
+    #expect(command.arguments.joined(separator: " ").contains("fps=30.0"))
+  }
+
+  @Test("builds audio extract command")
+  func buildsAudioExtractCommand() {
+    let request = VideoEditRequest(
+      sourceURL: URL(filePath: "/tmp/input.mp4"),
+      outputURL: URL(filePath: "/tmp/output.m4a"),
+      trimRange: VideoTrimRange(
+        startSeconds: 0,
+        endSeconds: 3,
+        durationSeconds: 3
+      ),
+      extractAudioOnly: true,
+      audioFormat: .m4a
+    )
+    let command = FFmpegCommandBuilder.buildAudioExtract(
+      request: request,
+      ffmpegExecutable: URL(filePath: "/usr/local/bin/ffmpeg")
+    )
+    #expect(command.arguments.contains("-vn"))
+    #expect(command.arguments.contains("-c:a"))
+    #expect(command.arguments.contains("aac"))
+  }
+}
