@@ -17,6 +17,18 @@ public enum DirectoryScannerError: Error, Equatable, LocalizedError, Sendable {
   }
 }
 
+public struct ScanProgress: Equatable, Sendable {
+  public let indexedCount: Int
+  public let discoveredCount: Int
+
+  public init(indexedCount: Int, discoveredCount: Int) {
+    self.indexedCount = indexedCount
+    self.discoveredCount = discoveredCount
+  }
+}
+
+public typealias ScanProgressHandler = @Sendable (ScanProgress) async -> Void
+
 public struct DirectoryListing: Sendable {
   public let urls: [URL]
   public let issueCount: Int
@@ -120,26 +132,40 @@ public actor DirectoryScanner: DirectoryScanning {
   private let repository: any AssetRepository
   private let contentLister: any DirectoryContentListing
   private let resourceReader: any FileResourceReading
+  private let batchSize: Int
 
   public init(
     repository: any AssetRepository,
     fileManager: FileManager = .default,
     contentLister: any DirectoryContentListing = FoundationDirectoryContentLister(),
-    resourceReader: any FileResourceReading = FoundationFileResourceReader()
+    resourceReader: any FileResourceReading = FoundationFileResourceReader(),
+    batchSize: Int = 1_000
   ) {
     self.repository = repository
     self.fileManager = fileManager
     self.contentLister = contentLister
     self.resourceReader = resourceReader
+    self.batchSize = max(1, batchSize)
   }
 
   public func scan(rootURL: URL) async throws -> ScanSummary {
+    try await scan(rootURL: rootURL, progress: nil)
+  }
+
+  public func scan(
+    rootURL: URL,
+    progress: ScanProgressHandler?
+  ) async throws -> ScanSummary {
     let rootURL = rootURL.standardizedFileURL
     guard try isDirectory(rootURL) else {
       throw DirectoryScannerError.invalidRoot(rootURL)
     }
 
-    return try await scanValidated(scopeURL: rootURL, rootURL: rootURL)
+    return try await scanValidated(
+      scopeURL: rootURL,
+      rootURL: rootURL,
+      progress: progress
+    )
   }
 
   public func scan(scopeURL: URL, under rootURL: URL) async throws -> ScanSummary {
@@ -149,17 +175,45 @@ public actor DirectoryScanner: DirectoryScanning {
       throw DirectoryScannerError.invalidRoot(scopeURL)
     }
 
-    return try await scanValidated(scopeURL: scopeURL, rootURL: rootURL)
+    return try await scanValidated(
+      scopeURL: scopeURL,
+      rootURL: rootURL,
+      progress: nil
+    )
   }
 
   private func scanValidated(
     scopeURL: URL,
-    rootURL: URL
+    rootURL: URL,
+    progress: ScanProgressHandler?
   ) async throws -> ScanSummary {
     let hiddenPaths = try await repository.hiddenAssetPaths(in: rootURL)
     let discovery = try discoverImages(in: scopeURL, hiddenPaths: hiddenPaths)
+    let hadExistingAssets: Bool
+    if progress == nil {
+      hadExistingAssets = true
+    } else {
+      hadExistingAssets = try await repository.assets().contains {
+        $0.url.isContained(in: scopeURL)
+      }
+    }
+    if let progress {
+      var indexedCount = 0
+      for batch in discovery.assets.chunked(into: batchSize) {
+        try await repository.upsertAssets(Array(batch), in: rootURL)
+        indexedCount += batch.count
+        await progress(
+          ScanProgress(
+            indexedCount: indexedCount,
+            discoveredCount: discovery.assets.count
+          )
+        )
+      }
+    }
     let removedCount: Int
-    if discovery.issueCount == 0 {
+    if progress != nil, !hadExistingAssets {
+      removedCount = 0
+    } else if discovery.issueCount == 0 {
       removedCount = try await repository.replaceAssets(
         in: scopeURL,
         under: rootURL,
@@ -292,6 +346,17 @@ public actor DirectoryScanner: DirectoryScanning {
       return nil
     }
     return ImageDimensions(width: width, height: height)
+  }
+}
+
+extension Array {
+  fileprivate func chunked(into size: Int) -> [ArraySlice<Element>] {
+    guard !isEmpty else {
+      return []
+    }
+    return stride(from: 0, to: count, by: size).map { startIndex in
+      self[startIndex..<Swift.min(startIndex + size, count)]
+    }
   }
 }
 

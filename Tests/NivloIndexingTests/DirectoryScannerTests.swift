@@ -285,6 +285,24 @@ struct DirectoryScannerTests {
 
     #expect(await repository.assets().map(\.url) == [imageURL.standardizedFileURL])
   }
+
+  @Test("reports progressive batches while indexing a large folder")
+  func reportsProgressiveBatches() async throws {
+    let fixture = try TemporaryDirectory()
+    for index in 0..<5 {
+      try makeImage(at: fixture.url.appending(path: "\(index).png"))
+    }
+    let repository = InMemoryAssetRepository()
+    let scanner = DirectoryScanner(repository: repository, batchSize: 2)
+    let progress = ProgressRecorder()
+
+    _ = try await scanner.scan(rootURL: fixture.url) { update in
+      await progress.append(update)
+    }
+
+    #expect(await progress.values.map(\.indexedCount) == [2, 4, 5])
+    #expect(await repository.assets().count == 5)
+  }
 }
 
 private struct DirectoryContentListerStub: DirectoryContentListing {
@@ -354,4 +372,12 @@ private func makeImage(at url: URL) throws {
 
 private enum FixtureError: Error {
   case couldNotCreateImage
+}
+
+private actor ProgressRecorder {
+  private(set) var values: [ScanProgress] = []
+
+  func append(_ progress: ScanProgress) {
+    values.append(progress)
+  }
 }

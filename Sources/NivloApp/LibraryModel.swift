@@ -106,7 +106,9 @@ final class LibraryModel: ObservableObject {
       await startWatchingActiveRoots()
       statusMessage = "Added \(rootURL.lastPathComponent) · scanning…"
 
-      let summary = try await scanner.scan(rootURL: rootURL)
+      let summary = try await scanner.scan(rootURL: rootURL) { [weak self] progress in
+        await self?.applyScanProgress(progress, folderName: rootURL.lastPathComponent)
+      }
       assets = try await repository.assets()
       await startBackgroundValidation()
       statusMessage = scanStatus(summary)
@@ -349,6 +351,15 @@ final class LibraryModel: ObservableObject {
     }
     isScanning = false
     await enrichAccessibleAssets()
+  }
+
+  private func applyScanProgress(
+    _ progress: ScanProgress,
+    folderName: String
+  ) async {
+    assets = (try? await repository.assets()) ?? assets
+    statusMessage =
+      "Scanning \(folderName) · \(progress.indexedCount) / \(progress.discoveredCount)"
   }
 
   private func startWatchingActiveRoots() async {
