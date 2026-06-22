@@ -14,8 +14,6 @@ struct LibraryView: View {
   }
 
   @StateObject private var model = LibraryModel()
-  @State private var isChoosingFolder = false
-  @State private var isChoosingExportFolder = false
   @State private var selection: SectionSelection? = .allImages
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
@@ -40,7 +38,7 @@ struct LibraryView: View {
     .toolbar {
       ToolbarItem {
         Button {
-          isChoosingFolder = true
+          chooseFolderToIndex()
         } label: {
           Label("Add Folder", systemImage: "folder.badge.plus")
         }
@@ -90,7 +88,7 @@ struct LibraryView: View {
       }
       ToolbarItem {
         Button {
-          isChoosingExportFolder = true
+          chooseExportFolder()
         } label: {
           Label("Export Selected", systemImage: "square.and.arrow.up")
         }
@@ -107,31 +105,6 @@ struct LibraryView: View {
     }
     .task {
       await model.discoverSpotlightCandidates()
-    }
-    .fileImporter(
-      isPresented: $isChoosingFolder,
-      allowedContentTypes: [.folder],
-      allowsMultipleSelection: false
-    ) { result in
-      guard case .success(let urls) = result, let url = urls.first else {
-        return
-      }
-      Task {
-        await model.addFolder(url)
-      }
-    }
-    .fileImporter(
-      isPresented: $isChoosingExportFolder,
-      allowedContentTypes: [.folder],
-      allowsMultipleSelection: false
-    ) { result in
-      guard case .success(let urls) = result, let url = urls.first else {
-        return
-      }
-      Task {
-        await model.exportAssets(assetIDs: selectedAssetIDs, to: url)
-        selectedAssetIDs = []
-      }
     }
     .alert(
       "Couldn’t index this folder",
@@ -268,7 +241,7 @@ struct LibraryView: View {
         Text("Add a folder. Nivlo indexes images in place and never uploads the originals.")
       } actions: {
         Button("Add Folder") {
-          isChoosingFolder = true
+          chooseFolderToIndex()
         }
         .buttonStyle(.borderedProminent)
       }
@@ -338,6 +311,49 @@ struct LibraryView: View {
     } else {
       selectedAssetIDs.insert(assetID)
     }
+  }
+
+  private func chooseFolderToIndex() {
+    guard
+      let url = chooseDirectory(
+        title: "Add Folder to Nivlo",
+        prompt: "Add Folder"
+      )
+    else {
+      return
+    }
+    Task {
+      await model.addFolder(url)
+    }
+  }
+
+  private func chooseExportFolder() {
+    guard
+      let url = chooseDirectory(
+        title: "Export Selected Images",
+        prompt: "Export"
+      )
+    else {
+      return
+    }
+    Task {
+      await model.exportAssets(assetIDs: selectedAssetIDs, to: url)
+      selectedAssetIDs = []
+    }
+  }
+
+  private func chooseDirectory(
+    title: String,
+    prompt: String
+  ) -> URL? {
+    let panel = NSOpenPanel()
+    panel.title = title
+    panel.prompt = prompt
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    return panel.runModal() == .OK ? panel.url : nil
   }
 
   @ViewBuilder

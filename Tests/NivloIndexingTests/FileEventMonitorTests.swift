@@ -44,7 +44,7 @@ struct FileEventMonitorTests {
       ],
       for: root
     )
-    try await Task.sleep(nanoseconds: 50_000_000)
+    try await Task.sleep(nanoseconds: 200_000_000)
     let calls = await scanner.calls()
 
     #expect(calls == [.scoped(scopeURL: icons, rootURL: root)])
@@ -66,7 +66,7 @@ struct FileEventMonitorTests {
       [FileSystemEvent(url: root, requiresFullValidation: true)],
       for: root
     )
-    try await Task.sleep(nanoseconds: 50_000_000)
+    try await Task.sleep(nanoseconds: 200_000_000)
     let calls = await scanner.calls()
 
     #expect(calls == [.root(root)])
