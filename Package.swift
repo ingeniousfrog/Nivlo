@@ -36,6 +36,9 @@ let package = Package(
         "NivloImaging",
         "NivloIndexing",
         "NivloPersistence",
+      ],
+      linkerSettings: [
+        .linkedFramework("AVKit")
       ]
     ),
     .testTarget(
