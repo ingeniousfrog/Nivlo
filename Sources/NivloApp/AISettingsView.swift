@@ -1,3 +1,4 @@
+import NivloDomain
 import SwiftUI
 
 enum AIConfiguration {
@@ -9,6 +10,8 @@ struct AISettingsView: View {
   private var selectedAdapterID = GenerationAdapterRegistry.all.first?.id ?? "openai-images"
   @State private var apiKey = ""
   @State private var statusMessage: String?
+  @AppStorage("nivlo.library.refreshInterval")
+  private var refreshIntervalRawValue = LibraryRefreshInterval.fifteenMinutes.rawValue
   @AppStorage("nivlo.language") private var languageRawValue = NivloLanguage.english.rawValue
 
   private var language: NivloLanguage {
@@ -17,36 +20,64 @@ struct AISettingsView: View {
 
   var body: some View {
     Form {
-      Picker(language.aiProvider, selection: $selectedAdapterID) {
-        ForEach(GenerationAdapterRegistry.all, id: \.id) { adapter in
-          Text(adapter.displayName).tag(adapter.id)
+      Section(language.library) {
+        Picker(language.autoRefresh, selection: $refreshIntervalRawValue) {
+          ForEach(LibraryRefreshInterval.allCases) { interval in
+            Text(refreshIntervalTitle(interval)).tag(interval.rawValue)
+          }
         }
+        Text(language.refreshLibrary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
-      SecureField(language.aiAPIKey, text: $apiKey)
-      HStack {
-        Button(language.saveAPIKey) {
-          saveAPIKey()
+
+      Section(language.aiSettingsTitle) {
+        Picker(language.aiProvider, selection: $selectedAdapterID) {
+          ForEach(GenerationAdapterRegistry.all, id: \.id) { adapter in
+            Text(adapter.displayName).tag(adapter.id)
+          }
         }
-        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        if let statusMessage {
-          Text(statusMessage)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        SecureField(language.aiAPIKey, text: $apiKey)
+        HStack {
+          Button(language.saveAPIKey) {
+            saveAPIKey()
+          }
+          .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          if let statusMessage {
+            Text(statusMessage)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
         }
+        Text(language.aiConfigureInSettings)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
-      Text(language.aiConfigureInSettings)
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
     .formStyle(.grouped)
     .padding(20)
-    .frame(width: 420)
+    .frame(width: 460)
     .onAppear {
       apiKey = APIKeyStore.load(providerID: selectedAdapterID) ?? ""
     }
     .onChange(of: selectedAdapterID) { _, newValue in
       apiKey = APIKeyStore.load(providerID: newValue) ?? ""
       statusMessage = nil
+    }
+  }
+
+  private func refreshIntervalTitle(_ interval: LibraryRefreshInterval) -> String {
+    switch interval {
+    case .off:
+      language.refreshOff
+    case .fiveMinutes:
+      language.refreshEveryFiveMinutes
+    case .fifteenMinutes:
+      language.refreshEveryFifteenMinutes
+    case .thirtyMinutes:
+      language.refreshEveryThirtyMinutes
+    case .hourly:
+      language.refreshHourly
     }
   }
 

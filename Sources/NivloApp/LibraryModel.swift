@@ -420,6 +420,11 @@ final class LibraryModel: ObservableObject {
   }
 
   func validateLibraryNow() async {
+    guard !isScanning else {
+      return
+    }
+    isScanning = true
+    defer { isScanning = false }
     validationStatusMessage = "Validating indexed folders…"
     do {
       let summary = try await validationScheduler.validateNow(
@@ -479,12 +484,7 @@ final class LibraryModel: ObservableObject {
   }
 
   private func startBackgroundValidation() async {
-    await validationScheduler.start(
-      rootURLs: { [rootAccessManager] in
-        await rootAccessManager.activeURLs()
-      }
-    )
-    validationStatusMessage = "Background validation scheduled"
+    validationStatusMessage = "Automatic refresh ready"
   }
 
   private func refreshAfterFileEvents() async {

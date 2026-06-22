@@ -5,8 +5,10 @@ struct AssetMasonryGrid: View {
   let assets: [ImageAsset]
   let enrichments: [AssetID: AssetEnrichment]
   let selectedAssetIDs: Set<AssetID>
+  let isSelecting: Bool
   let availableWidth: CGFloat
   let onOpen: (ImageAsset) -> Void
+  let onToggleSelection: (AssetID) -> Void
 
   private let spacing: CGFloat = 16
   private let minimumColumnWidth: CGFloat = 210
@@ -31,7 +33,11 @@ struct AssetMasonryGrid: View {
               isSelected: selectedAssetIDs.contains(asset.id)
             )
             .onTapGesture {
-              onOpen(asset)
+              if isSelecting {
+                onToggleSelection(asset.id)
+              } else {
+                onOpen(asset)
+              }
             }
           }
         }

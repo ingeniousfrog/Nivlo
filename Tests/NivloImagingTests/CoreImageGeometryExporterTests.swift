@@ -43,6 +43,41 @@ struct CoreImageGeometryExporterTests {
     #expect(dimensions.width == 60)
     #expect(dimensions.height == 40)
   }
+
+  @Test("erase mask strokes remove previously painted mask regions")
+  func eraseMaskStroke() throws {
+    let fixture = try GeometryExportFixture(width: 100, height: 100)
+    let outputURL = fixture.rootURL.appending(path: "erased-mask.png")
+    let exporter = CoreImageGeometryExporter()
+
+    try exporter.exportPNG(
+      sourceURL: fixture.imageURL,
+      outputURL: outputURL,
+      maskStrokes: [
+        MaskStroke(
+          points: [
+            MaskBrushPoint(x: 0.1, y: 0.5),
+            MaskBrushPoint(x: 0.9, y: 0.5),
+          ],
+          brushRadius: 0.12,
+          operation: .paint
+        ),
+        MaskStroke(
+          points: [
+            MaskBrushPoint(x: 0.45, y: 0.5),
+            MaskBrushPoint(x: 0.55, y: 0.5),
+          ],
+          brushRadius: 0.08,
+          operation: .erase
+        ),
+      ]
+    )
+
+    let paintedAlpha = try pixelAlpha(at: CGPoint(x: 20, y: 50), in: outputURL)
+    let erasedAlpha = try pixelAlpha(at: CGPoint(x: 50, y: 50), in: outputURL)
+    #expect(paintedAlpha > 0.9)
+    #expect(erasedAlpha < 0.1, "Erased pixel alpha was \(erasedAlpha)")
+  }
 }
 
 private struct GeometryExportFixture {
@@ -109,6 +144,33 @@ private func imageDimensions(at url: URL) throws -> (width: Int, height: Int) {
     throw GeometryExportFixtureError.creationFailed
   }
   return (width, height)
+}
+
+private func pixelAlpha(at point: CGPoint, in url: URL) throws -> Double {
+  guard
+    let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+  else {
+    throw GeometryExportFixtureError.creationFailed
+  }
+  var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+  guard
+    let context = CGContext(
+      data: &pixels,
+      width: image.width,
+      height: image.height,
+      bitsPerComponent: 8,
+      bytesPerRow: image.width * 4,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+  else {
+    throw GeometryExportFixtureError.creationFailed
+  }
+  context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+  let x = min(max(Int(point.x), 0), image.width - 1)
+  let y = min(max(Int(point.y), 0), image.height - 1)
+  return Double(pixels[(y * image.width + x) * 4 + 3]) / 255
 }
 
 private enum GeometryExportFixtureError: Error {

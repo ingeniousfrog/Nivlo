@@ -21,7 +21,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
 
   var addFolder: String { text("Add Folder", "添加文件夹") }
-  var allImages: String { text("All Images", "全部图片") }
+  var allImages: String { text("All Assets", "全部素材") }
   var cancel: String { text("Cancel", "取消") }
   var hideAsset: String { text("Hide", "隐藏") }
   var hideHelp: String {
@@ -41,6 +41,15 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var export: String { text("Export", "导出") }
   var exportAsset: String { text("Export image", "导出图片") }
   var exportSelected: String { text("Export Selected", "导出所选") }
+  var shareSelected: String { text("Share selected", "分享所选") }
+  var doneSelecting: String { text("Done", "完成") }
+  var refreshLibrary: String { text("Refresh library", "刷新素材库") }
+  var autoRefresh: String { text("Automatic refresh", "自动刷新") }
+  var refreshOff: String { text("Off", "关闭") }
+  var refreshEveryFiveMinutes: String { text("Every 5 minutes", "每 5 分钟") }
+  var refreshEveryFifteenMinutes: String { text("Every 15 minutes", "每 15 分钟") }
+  var refreshEveryThirtyMinutes: String { text("Every 30 minutes", "每 30 分钟") }
+  var refreshHourly: String { text("Every hour", "每小时") }
   var filter: String { text("Filter", "筛选") }
   var finder: String { text("Finder", "访达") }
   var folders: String { text("Folders", "文件夹") }
@@ -162,10 +171,26 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var addTextAnnotation: String { text("Add text", "添加文字") }
   var addRectangleAnnotation: String { text("Add rectangle", "添加矩形") }
   var addArrowAnnotation: String { text("Add arrow", "添加箭头") }
+  var annotationPlaceholder: String { text("Text", "文字") }
+  var annotationText: String { text("Text", "文字内容") }
+  var annotationFont: String { text("Font", "字体") }
+  var annotationFontSize: String { text("Size", "字号") }
+  var annotationBold: String { text("Bold", "粗体") }
+  var annotationItalic: String { text("Italic", "斜体") }
+  var annotationColor: String { text("Color", "颜色") }
+  var annotationStrokeColor: String { text("Stroke", "描边颜色") }
+  var annotationFillColor: String { text("Fill", "填充颜色") }
+  var annotationLineWidth: String { text("Line width", "线宽") }
+  var annotationLineStyle: String { text("Line style", "线条样式") }
+  var arrowDirection: String { text("Arrowheads", "箭头方向") }
+  var deleteAnnotation: String { text("Delete selected", "删除所选标注") }
   var clearAnnotations: String { text("Clear annotations", "清除标注") }
   var annotationCount: String { text("Annotations", "标注数") }
   var addMaskStroke: String { text("Add mask brush", "添加蒙版笔触") }
   var clearMask: String { text("Clear mask", "清除蒙版") }
+  var maskMode: String { text("Mask tool", "蒙版工具") }
+  var maskPaint: String { text("Brush", "画笔") }
+  var maskErase: String { text("Eraser", "橡皮擦") }
   var maskStrokeCount: String { text("Mask strokes", "蒙版笔触数") }
   var layerBackground: String { text("Background layer", "背景层") }
   var layerAdjustments: String { text("Adjustments layer", "调整层") }
@@ -209,8 +234,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var apiKeySaved: String { text("API key saved", "API 密钥已保存") }
   var editorCanvasHint: String {
     text(
-      "Choose a tool on the right. Preview renders every active edit; export writes that final result to a new file.",
-      "在右侧选择工具。预览会渲染全部编辑；导出会把最终结果写入新文件。"
+      "Choose a tool and edit directly on the canvas. Export writes the current result to a new file.",
+      "选择工具后可直接在画布上编辑；导出会把当前结果写入新文件。"
     )
   }
   var editorGeometryHint: String {
@@ -221,8 +246,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorAdjustHint: String {
     text(
-      "Tune the sliders, then Preview to render all edits together. Revert restores the opening state.",
-      "调节滑块后点击预览，统一渲染全部编辑。还原会恢复到打开时的状态。"
+      "Changes appear on the canvas as you move each slider. Revert restores the opening state.",
+      "移动滑块时效果会立即显示在画布上。还原会恢复到打开时的状态。"
     )
   }
   var maskBrushHint: String {
@@ -278,6 +303,28 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
       "Nivlo will hide \(filename) from this app and keep the original file untouched in Finder.",
       "Nivlo 会在本应用中隐藏 \(filename)，但不会修改或删除访达中的原文件。"
     )
+  }
+
+  func annotationLineStyleName(_ style: AnnotationLineStyle) -> String {
+    switch style {
+    case .solid:
+      text("Solid", "实线")
+    case .dashed:
+      text("Dashed", "虚线")
+    case .dashDot:
+      text("Dash-dot", "点划线")
+    }
+  }
+
+  func arrowDirectionName(_ direction: ArrowDirection) -> String {
+    switch direction {
+    case .forward:
+      text("End", "末端")
+    case .backward:
+      text("Start", "起点")
+    case .both:
+      text("Both", "双向")
+    }
   }
 
   func spotlightStatus(_ state: LibraryModel.SpotlightDiscoveryState) -> String {
@@ -338,6 +385,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
 
 struct LibraryView: View {
   @ObservedObject var toolBootstrapper: ToolBootstrapper
+  @Environment(\.openSettings) private var openSettings
 
   private enum SectionSelection: Hashable {
     case allImages
@@ -352,6 +400,7 @@ struct LibraryView: View {
   @State private var selection: SectionSelection? = .allImages
   @State private var searchText = ""
   @State private var selectedAssetIDs: Set<AssetID> = []
+  @State private var isSelecting = false
   @State private var previewAsset: ImageAsset?
   @State private var folderPendingRemoval: LibraryRoot?
   @State private var folderFilter: String?
@@ -360,7 +409,9 @@ struct LibraryView: View {
   @State private var timeFilter: TimeFilter = .all
   @State private var sizeFilter: SizeFilter = .all
   @State private var dimensionFilter: DimensionFilter = .all
-  @State private var sortOption: SortOption = .path
+  @State private var sortOption: SortOption = .newestModified
+  @AppStorage("nivlo.library.refreshInterval")
+  private var refreshIntervalRawValue = LibraryRefreshInterval.fifteenMinutes.rawValue
   @AppStorage("nivlo.language") private var languageRawValue =
     NivloLanguage.english.rawValue
 
@@ -379,6 +430,16 @@ struct LibraryView: View {
       content
     }
     .toolbar {
+      ToolbarItem {
+        Button {
+          Task {
+            await model.validateLibraryNow()
+          }
+        } label: {
+          Label(language.refreshLibrary, systemImage: "arrow.clockwise")
+        }
+        .disabled(model.isScanning)
+      }
       ToolbarItem {
         Button {
           chooseFolderToIndex()
@@ -429,17 +490,27 @@ struct LibraryView: View {
           Label(language.filter, systemImage: "line.3.horizontal.decrease.circle")
         }
       }
-      ToolbarItem {
+      ToolbarItemGroup {
         Button {
-          chooseExportFolder()
+          isSelecting.toggle()
+          if !isSelecting {
+            selectedAssetIDs.removeAll()
+          }
         } label: {
-          Label(language.exportSelected, systemImage: "square.and.arrow.up")
+          Label(
+            isSelecting ? language.doneSelecting : language.select,
+            systemImage: isSelecting ? "checkmark.circle.fill" : "checkmark.circle"
+          )
+        }
+
+        ShareLink(items: selectedAssets.map(\.url)) {
+          Label(language.shareSelected, systemImage: "square.and.arrow.up")
         }
         .disabled(selectedAssetIDs.isEmpty)
       }
       ToolbarItem {
         Button {
-          NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+          openSettings()
         } label: {
           Label(language.openSettings, systemImage: "gearshape")
         }
@@ -464,6 +535,9 @@ struct LibraryView: View {
     .task {
       await model.discoverSpotlightCandidates()
     }
+    .task(id: refreshIntervalRawValue) {
+      await runAutomaticRefreshLoop()
+    }
     .alert(
       "Couldn’t index this folder",
       isPresented: Binding(
@@ -484,11 +558,7 @@ struct LibraryView: View {
         asset: asset,
         enrichment: model.enrichments[asset.id],
         language: language,
-        isSelected: selectedAssetIDs.contains(asset.id),
         toolsReady: model.toolBootstrapper.isReady,
-        onToggleSelection: {
-          toggleSelection(asset.id)
-        },
         onExport: {
           chooseExportFolder(assetIDs: [asset.id])
         },
@@ -728,9 +798,13 @@ struct LibraryView: View {
             assets: assets,
             enrichments: model.enrichments,
             selectedAssetIDs: selectedAssetIDs,
+            isSelecting: isSelecting,
             availableWidth: max(0, proxy.size.width - 48),
             onOpen: { asset in
               previewAsset = asset
+            },
+            onToggleSelection: { assetID in
+              toggleSelection(assetID)
             }
           )
           .padding(.horizontal, 24)
@@ -747,6 +821,27 @@ struct LibraryView: View {
       selectedAssetIDs.remove(assetID)
     } else {
       selectedAssetIDs.insert(assetID)
+    }
+  }
+
+  private var selectedAssets: [ImageAsset] {
+    model.assets.filter { selectedAssetIDs.contains($0.id) }
+  }
+
+  private func runAutomaticRefreshLoop() async {
+    guard
+      let interval = LibraryRefreshInterval(rawValue: refreshIntervalRawValue),
+      let seconds = interval.seconds
+    else {
+      return
+    }
+    while !Task.isCancelled {
+      do {
+        try await Task.sleep(for: .seconds(seconds))
+      } catch {
+        return
+      }
+      await model.validateLibraryNow()
     }
   }
 
@@ -898,7 +993,11 @@ struct LibraryView: View {
                     isSelected: selectedAssetIDs.contains(asset.id)
                   )
                   .onTapGesture {
-                    previewAsset = asset
+                    if isSelecting {
+                      toggleSelection(asset.id)
+                    } else {
+                      previewAsset = asset
+                    }
                   }
                 }
               }
@@ -1253,9 +1352,7 @@ private struct AssetPreviewPanel: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
   let language: NivloLanguage
-  let isSelected: Bool
   let toolsReady: Bool
-  let onToggleSelection: () -> Void
   let onExport: () -> Void
   let onHide: () -> Void
   let onImageExported: (PicxOptimizeResult, ImageEditRequest) -> Void
@@ -1293,8 +1390,6 @@ private struct AssetPreviewPanel: View {
         AssetPreviewToolbar(
           asset: asset,
           language: language,
-          isSelected: isSelected,
-          onToggleSelection: onToggleSelection,
           onExport: onExport,
           onEdit: {
             isEditorPresented = true
@@ -1443,12 +1538,12 @@ private struct AssetPreviewPanel: View {
           copyPath()
         } label: {
           if let copyFeedback {
-            Label(
-              copyFeedback == .success ? language.copied : language.copyFailed,
-              systemImage: copyFeedback == .success
-                ? "checkmark.circle.fill"
-                : "exclamationmark.circle"
+            Image(
+              systemName: copyFeedback == .success
+                ? "checkmark"
+                : "exclamationmark.triangle"
             )
+            .foregroundStyle(copyFeedback == .success ? Color.green : Color.red)
           } else {
             Image(systemName: "doc.on.doc")
           }
@@ -1481,8 +1576,6 @@ private struct AssetPreviewPanel: View {
 private struct AssetPreviewToolbar: View {
   let asset: ImageAsset
   let language: NivloLanguage
-  let isSelected: Bool
-  let onToggleSelection: () -> Void
   let onExport: () -> Void
   let onEdit: () -> Void
   let onHide: () -> Void
@@ -1509,16 +1602,6 @@ private struct AssetPreviewToolbar: View {
         Label(language.export, systemImage: "square.and.arrow.up")
       }
       .help(language.exportAsset)
-
-      Button {
-        onToggleSelection()
-      } label: {
-        Label(
-          isSelected ? language.selected : language.select,
-          systemImage: isSelected ? "checkmark.circle.fill" : "circle"
-        )
-      }
-      .help(isSelected ? language.removeFromSelection : language.selectForExport)
 
       Button {
         onHide()

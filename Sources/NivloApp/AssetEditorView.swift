@@ -46,8 +46,10 @@ struct AssetEditorView: View {
   @State private var editSession = ImageEditSession(
     initialSnapshot: ImageEditSnapshot.defaultInitial
   )
+  @State private var selectedAnnotationID: UUID?
   @State private var currentMaskStroke: MaskStroke?
   @State private var brushRadius = 0.035
+  @State private var maskOperation: MaskStrokeOperation = .paint
   @State private var outputFormat: PicxOutputFormat = .webp
   @State private var quality = 82.0
   @State private var preset: PicxPreset = .web
@@ -57,15 +59,9 @@ struct AssetEditorView: View {
   @State private var exportMessage: String?
   @State private var lastExportedURL: URL?
   @State private var isExporting = false
-  @State private var isPreviewing = false
-  @State private var isRenderingPreview = false
-  @State private var previewImage: NSImage?
-  @State private var previewTask: Task<Void, Never>?
-  @State private var previewRequestID = UUID()
   @State private var isExportOptionsPresented = false
 
   private let pipeline = ImageEditPipeline()
-  private let previewRenderer = ImageEditPreviewRenderer()
   private let inspectorWidth: CGFloat = 360
 
   private var editSnapshot: ImageEditSnapshot {
@@ -90,9 +86,6 @@ struct AssetEditorView: View {
       statusBar
     }
     .frame(minWidth: 1_080, minHeight: 760)
-    .onDisappear {
-      previewTask?.cancel()
-    }
   }
 
   private var toolbar: some View {
@@ -108,11 +101,6 @@ struct AssetEditorView: View {
       }
       .frame(maxWidth: 360, alignment: .leading)
       Spacer()
-      if isPreviewing {
-        Label(language.previewActive, systemImage: "eye.fill")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
       if !toolsReady {
         Label(language.toolsNotReady, systemImage: "wrench.and.screwdriver")
           .font(.caption)
@@ -182,22 +170,9 @@ struct AssetEditorView: View {
       ZStack {
         Color(nsColor: .underPageBackgroundColor)
         if canEdit {
-          if isPreviewing, let previewImage {
-            Image(nsImage: previewImage)
-              .resizable()
-              .aspectRatio(contentMode: .fit)
-              .padding(24)
-              .frame(maxWidth: proxy.size.width, maxHeight: proxy.size.height)
-          } else {
-            editableCanvas(size: layout.contentRect.size)
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-              .padding(24)
-          }
-          if isRenderingPreview {
-            ProgressView(language.renderingPreview)
-              .padding(12)
-              .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-          }
+          editableCanvas(size: layout.contentRect.size)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .padding(24)
         } else {
           ContentUnavailableView(
             "Preview unavailable",
@@ -222,6 +197,10 @@ struct AssetEditorView: View {
         contentMode: .fit
       )
       .frame(width: sourceFrameSize.width, height: sourceFrameSize.height)
+      .brightness(editSnapshot.adjustments.exposure * 0.32)
+      .contrast(1 + editSnapshot.adjustments.contrast)
+      .saturation(1 + editSnapshot.adjustments.saturation)
+      .hueRotation(.degrees(editSnapshot.adjustments.warmth * -12))
       .scaleEffect(x: editSnapshot.flippedHorizontally ? -1 : 1, y: 1)
       .rotationEffect(.degrees(Double(editSnapshot.quarterTurns * 90)))
     }
@@ -234,16 +213,23 @@ struct AssetEditorView: View {
         InteractiveCropOverlay(cropRect: snapshotBinding(\.cropRect))
           .frame(width: size.width, height: size.height)
       }
+      MaskBrushOverlay(
+        strokes: editSnapshot.maskStrokes,
+        currentStroke: currentMaskStroke
+      )
+      .frame(width: size.width, height: size.height)
+      AnnotationCanvasOverlay(
+        annotations: snapshotBinding(\.annotations),
+        selectedAnnotationID: $selectedAnnotationID,
+        isEditing: selectedTool == .annotate
+      )
+      .frame(width: size.width, height: size.height)
       if selectedTool == .mask {
-        MaskBrushOverlay(
-          strokes: editSnapshot.maskStrokes,
-          currentStroke: currentMaskStroke
-        )
-        .frame(width: size.width, height: size.height)
         MaskPaintingSurface(
           maskStrokes: snapshotBinding(\.maskStrokes),
           currentMaskStroke: $currentMaskStroke,
-          brushRadius: brushRadius
+          brushRadius: brushRadius,
+          operation: maskOperation
         )
         .frame(width: size.width, height: size.height)
       }
@@ -277,7 +263,7 @@ struct AssetEditorView: View {
         .padding(20)
       }
       Divider()
-      previewRevertButtons
+      revertButton
         .padding(20)
     }
     .background(Color(nsColor: .windowBackgroundColor))
@@ -290,38 +276,28 @@ struct AssetEditorView: View {
         .foregroundStyle(.secondary)
         .textCase(.uppercase)
 
-      LazyVGrid(
-        columns: [
-          GridItem(.flexible(), spacing: 8),
-          GridItem(.flexible(), spacing: 8),
-        ],
-        spacing: 8
-      ) {
+      HStack(spacing: 6) {
         ForEach(ImageEditorTool.allCases) { tool in
           Button {
             selectedTool = tool
-            exitPreview()
           } label: {
-            Label(tool.title(language: language), systemImage: tool.icon)
-              .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-              .contentShape(Rectangle())
+            VStack(spacing: 4) {
+              Image(systemName: tool.icon)
+              Text(tool.title(language: language))
+                .font(.caption2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .contentShape(Rectangle())
           }
           .buttonStyle(.bordered)
           .tint(selectedTool == tool ? Color.accentColor : .secondary)
-          .controlSize(.large)
         }
       }
     }
   }
 
-  private var previewRevertButtons: some View {
-    HStack(spacing: 10) {
-      Button(language.previewChanges) {
-        runPreview()
-      }
-      .buttonStyle(.borderedProminent)
-      .disabled(isRenderingPreview)
-      .frame(maxWidth: .infinity)
+  private var revertButton: some View {
+    HStack {
       Button(language.revertChanges) {
         revertEdits()
       }
@@ -338,18 +314,10 @@ struct AssetEditorView: View {
         Text(language.exportingImage)
       } else if let exportMessage {
         Text(exportMessage)
-      } else if isPreviewing {
-        Text(language.previewActiveHint)
       } else {
         Text(statusHint)
       }
       Spacer()
-      if isPreviewing {
-        Button(language.exitPreview) {
-          exitPreview()
-        }
-        .controlSize(.small)
-      }
       if let lastExportedURL {
         Button(language.showInFinder) {
           NSWorkspace.shared.activateFileViewerSelecting([lastExportedURL])
@@ -435,45 +403,70 @@ struct AssetEditorView: View {
       sliderRow(language.adjustContrast, keyPath: \.contrast, range: -0.5...0.5)
       sliderRow(language.adjustSaturation, keyPath: \.saturation, range: -0.5...0.5)
       sliderRow(language.adjustWarmth, keyPath: \.warmth, range: -1...1)
+      Button(language.reset) {
+        updateSnapshot { $0.adjustments = .neutral }
+      }
     }
   }
 
   private var annotateControls: some View {
     VStack(alignment: .leading, spacing: 12) {
       Button(language.addTextAnnotation) {
-        updateSnapshot {
-          $0.annotations.append(
-            ImageAnnotation(
-              kind: .text,
-              text: "Note",
-              normalizedRect: NormalizedCropRect(x: 0.1, y: 0.1, width: 0.3, height: 0.1)
+        addAnnotation(
+          ImageAnnotation(
+            kind: .text,
+            text: language.annotationPlaceholder,
+            normalizedRect: NormalizedCropRect(
+              x: 0.3,
+              y: 0.3,
+              width: 0.4,
+              height: 0.14
             )
           )
-        }
+        )
       }
       Button(language.addRectangleAnnotation) {
-        updateSnapshot {
-          $0.annotations.append(
-            ImageAnnotation(
-              kind: .rectangle,
-              normalizedRect: NormalizedCropRect(x: 0.2, y: 0.2, width: 0.3, height: 0.2)
+        addAnnotation(
+          ImageAnnotation(
+            kind: .rectangle,
+            normalizedRect: NormalizedCropRect(
+              x: 0.3,
+              y: 0.3,
+              width: 0.4,
+              height: 0.3
             )
           )
-        }
+        )
       }
       Button(language.addArrowAnnotation) {
-        updateSnapshot {
-          $0.annotations.append(
-            ImageAnnotation(
-              kind: .arrow,
-              normalizedRect: NormalizedCropRect(x: 0.15, y: 0.15, width: 0.35, height: 0.35)
+        addAnnotation(
+          ImageAnnotation(
+            kind: .arrow,
+            normalizedRect: NormalizedCropRect(
+              x: 0.25,
+              y: 0.25,
+              width: 0.5,
+              height: 0.4
             )
           )
+        )
+      }
+
+      if let annotation = selectedAnnotationBinding {
+        Divider()
+        annotationControls(annotation)
+        Button(language.deleteAnnotation, role: .destructive) {
+          let id = annotation.wrappedValue.id
+          updateSnapshot { snapshot in
+            snapshot.annotations.removeAll { $0.id == id }
+          }
+          selectedAnnotationID = nil
         }
       }
       if !editSnapshot.annotations.isEmpty {
         Button(language.clearAnnotations, role: .destructive) {
           updateSnapshot { $0.annotations.removeAll() }
+          selectedAnnotationID = nil
         }
       }
     }
@@ -490,6 +483,14 @@ struct AssetEditorView: View {
         Text(language.maskBrushSize)
       }
 
+      Picker(language.maskMode, selection: $maskOperation) {
+        Label(language.maskPaint, systemImage: "paintbrush.fill")
+          .tag(MaskStrokeOperation.paint)
+        Label(language.maskErase, systemImage: "eraser.fill")
+          .tag(MaskStrokeOperation.erase)
+      }
+      .pickerStyle(.segmented)
+
       Text("\(language.maskStrokeCount): \(editSnapshot.maskStrokes.count)")
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -500,6 +501,60 @@ struct AssetEditorView: View {
           currentMaskStroke = nil
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func annotationControls(_ annotation: Binding<ImageAnnotation>) -> some View {
+    switch annotation.wrappedValue.kind {
+    case .text:
+      TextField(language.annotationText, text: annotation.text)
+      Picker(language.annotationFont, selection: annotation.textStyle.fontName) {
+        ForEach(["Helvetica", "Arial", "Avenir Next", "Georgia", "Menlo"], id: \.self) {
+          Text($0).tag($0)
+        }
+      }
+      HStack {
+        Text(language.annotationFontSize)
+        Slider(value: annotation.textStyle.fontSize, in: 8...96, step: 1)
+        Text("\(Int(annotation.wrappedValue.textStyle.fontSize))")
+          .monospacedDigit()
+      }
+      Toggle(language.annotationBold, isOn: annotation.textStyle.isBold)
+      Toggle(language.annotationItalic, isOn: annotation.textStyle.isItalic)
+      RGBAColorPicker(title: language.annotationColor, color: annotation.textStyle.color)
+    case .rectangle:
+      RGBAColorPicker(
+        title: language.annotationStrokeColor,
+        color: annotation.rectangleStyle.strokeColor
+      )
+      RGBAColorPicker(
+        title: language.annotationFillColor,
+        color: annotation.rectangleStyle.fillColor
+      )
+      lineWidthSlider(annotation.rectangleStyle.lineWidth)
+      Picker(language.annotationLineStyle, selection: annotation.rectangleStyle.lineStyle) {
+        ForEach(AnnotationLineStyle.allCases, id: \.self) { style in
+          Text(language.annotationLineStyleName(style)).tag(style)
+        }
+      }
+    case .arrow:
+      RGBAColorPicker(title: language.annotationColor, color: annotation.arrowStyle.color)
+      lineWidthSlider(annotation.arrowStyle.lineWidth)
+      Picker(language.arrowDirection, selection: annotation.arrowStyle.direction) {
+        ForEach(ArrowDirection.allCases, id: \.self) { direction in
+          Text(language.arrowDirectionName(direction)).tag(direction)
+        }
+      }
+    }
+  }
+
+  private func lineWidthSlider(_ width: Binding<Double>) -> some View {
+    HStack {
+      Text(language.annotationLineWidth)
+      Slider(value: width, in: 1...16, step: 1)
+      Text("\(Int(width.wrappedValue))")
+        .monospacedDigit()
     }
   }
 
@@ -539,60 +594,54 @@ struct AssetEditorView: View {
   }
 
   private func updateSnapshot(_ mutate: (inout ImageEditSnapshot) -> Void) {
-    cancelPreviewRendering()
-    exitPreview()
     editSession.update(mutate)
   }
 
-  private func runPreview() {
-    cancelPreviewRendering()
-    isRenderingPreview = true
-    let snapshot = editSnapshot
-    let requestID = UUID()
-    previewRequestID = requestID
-    previewTask = Task { @MainActor in
-      defer {
-        if previewRequestID == requestID {
-          isRenderingPreview = false
-          previewTask = nil
+  private func addAnnotation(_ annotation: ImageAnnotation) {
+    updateSnapshot { $0.annotations.append(annotation) }
+    selectedAnnotationID = annotation.id
+  }
+
+  private var selectedAnnotationBinding: Binding<ImageAnnotation>? {
+    guard
+      let selectedAnnotationID,
+      editSnapshot.annotations.contains(where: { $0.id == selectedAnnotationID })
+    else {
+      return nil
+    }
+    return Binding(
+      get: {
+        editSnapshot.annotations.first(where: { $0.id == selectedAnnotationID })
+          ?? ImageAnnotation(
+            kind: .text,
+            normalizedRect: NormalizedCropRect(
+              x: 0.3,
+              y: 0.3,
+              width: 0.4,
+              height: 0.14
+            )
+          )
+      },
+      set: { annotation in
+        updateSnapshot { snapshot in
+          guard
+            let index = snapshot.annotations.firstIndex(where: {
+              $0.id == selectedAnnotationID
+            })
+          else {
+            return
+          }
+          snapshot.annotations[index] = annotation
         }
       }
-      do {
-        let image = try await Task.detached(priority: .userInitiated) {
-          try previewRenderer.renderPreviewImage(sourceURL: asset.url, snapshot: snapshot)
-        }.value
-        try Task.checkCancellation()
-        guard previewRequestID == requestID else { return }
-        previewImage = image
-        isPreviewing = true
-        exportMessage = nil
-      } catch is CancellationError {
-        return
-      } catch {
-        guard previewRequestID == requestID else { return }
-        exportMessage = "\(language.previewFailed): \(error.localizedDescription)"
-      }
-    }
+    )
   }
 
   private func revertEdits() {
-    cancelPreviewRendering()
     editSession.revert()
     currentMaskStroke = nil
+    selectedAnnotationID = nil
     exportMessage = nil
-    exitPreview()
-  }
-
-  private func exitPreview() {
-    isPreviewing = false
-    previewImage = nil
-  }
-
-  private func cancelPreviewRendering() {
-    previewRequestID = UUID()
-    previewTask?.cancel()
-    previewTask = nil
-    isRenderingPreview = false
   }
 
   private func exportEditedCopy() {

@@ -73,18 +73,22 @@ struct InteractiveCropOverlay: View {
     _ item: (handle: NormalizedCropHandle, point: CGPoint),
     canvasSize: CGSize
   ) -> some View {
-    RoundedRectangle(cornerRadius: 3)
-      .fill(Color.accentColor)
-      .frame(width: 16, height: 16)
-      .overlay {
-        RoundedRectangle(cornerRadius: 3)
-          .stroke(Color.white.opacity(0.9), lineWidth: 1)
-      }
-      .position(item.point)
-      .contentShape(Rectangle().inset(by: -8))
-      .highPriorityGesture(dragGesture(for: item.handle, canvasSize: canvasSize))
-      .zIndex(1)
-      .accessibilityLabel(accessibilityLabel(for: item.handle))
+    ZStack {
+      Color.clear
+      RoundedRectangle(cornerRadius: 3)
+        .fill(Color.accentColor)
+        .frame(width: 14, height: 14)
+        .overlay {
+          RoundedRectangle(cornerRadius: 3)
+            .stroke(Color.white.opacity(0.9), lineWidth: 1)
+        }
+    }
+    .frame(width: 30, height: 30)
+    .position(item.point)
+    .contentShape(Rectangle())
+    .highPriorityGesture(dragGesture(for: item.handle, canvasSize: canvasSize))
+    .zIndex(1)
+    .accessibilityLabel(accessibilityLabel(for: item.handle))
   }
 
   private func dragGesture(
@@ -171,8 +175,11 @@ struct MaskBrushOverlay: View {
   var body: some View {
     Canvas { context, canvasSize in
       let allStrokes = strokes + (currentStroke.map { [$0] } ?? [])
-      for stroke in allStrokes where !stroke.points.isEmpty {
-        draw(stroke: stroke, context: &context, canvasSize: canvasSize)
+      context.drawLayer { layer in
+        for stroke in allStrokes where !stroke.points.isEmpty {
+          layer.blendMode = stroke.operation == .paint ? .normal : .destinationOut
+          draw(stroke: stroke, context: &layer, canvasSize: canvasSize)
+        }
       }
     }
     .allowsHitTesting(false)
@@ -220,6 +227,7 @@ struct MaskPaintingSurface: View {
   @Binding var maskStrokes: [MaskStroke]
   @Binding var currentMaskStroke: MaskStroke?
   let brushRadius: Double
+  let operation: MaskStrokeOperation
 
   var body: some View {
     GeometryReader { proxy in
@@ -242,7 +250,11 @@ struct MaskPaintingSurface: View {
 
   private func addPoint(_ point: MaskBrushPoint) {
     guard let stroke = currentMaskStroke else {
-      currentMaskStroke = MaskStroke(points: [point], brushRadius: brushRadius)
+      currentMaskStroke = MaskStroke(
+        points: [point],
+        brushRadius: brushRadius,
+        operation: operation
+      )
       return
     }
     let addedPoints =
@@ -252,7 +264,8 @@ struct MaskPaintingSurface: View {
     currentMaskStroke = MaskStroke(
       id: stroke.id,
       points: stroke.points + addedPoints,
-      brushRadius: brushRadius
+      brushRadius: brushRadius,
+      operation: operation
     )
   }
 

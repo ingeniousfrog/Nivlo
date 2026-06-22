@@ -209,22 +209,44 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
         )
         switch annotation.kind {
         case .rectangle:
-          context?.setStrokeColor(NSColor.systemYellow.cgColor)
-          context?.setLineWidth(3)
+          context?.setFillColor(nsColor(annotation.rectangleStyle.fillColor).cgColor)
+          context?.fill(rect)
+          context?.setStrokeColor(nsColor(annotation.rectangleStyle.strokeColor).cgColor)
+          context?.setLineWidth(annotation.rectangleStyle.lineWidth)
+          context?.setLineDash(
+            phase: 0,
+            lengths: dashPattern(annotation.rectangleStyle.lineStyle)
+          )
           context?.stroke(rect)
+          context?.setLineDash(phase: 0, lengths: [])
         case .arrow:
-          context?.setStrokeColor(NSColor.systemOrange.cgColor)
-          context?.setLineWidth(3)
-          context?.move(to: CGPoint(x: rect.minX, y: rect.minY))
-          context?.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-          context?.strokePath()
+          drawArrow(
+            in: rect,
+            style: annotation.arrowStyle,
+            context: context
+          )
         case .text:
+          var font =
+            NSFont(
+              name: annotation.textStyle.fontName,
+              size: annotation.textStyle.fontSize
+            ) ?? NSFont.systemFont(ofSize: annotation.textStyle.fontSize)
+          if annotation.textStyle.isBold {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+          }
+          if annotation.textStyle.isItalic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+          }
           let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
-            .foregroundColor: NSColor.white,
+            .font: font,
+            .foregroundColor: nsColor(annotation.textStyle.color),
           ]
-          let text = annotation.text.isEmpty ? "Note" : annotation.text
-          text.draw(at: rect.origin, withAttributes: attributes)
+          let text = annotation.text.isEmpty ? "Text" : annotation.text
+          text.draw(
+            with: rect,
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+          )
         }
       }
 
@@ -242,48 +264,60 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       return image
     #else
       let extent = image.extent.integral
-      let maskImage = NSImage(size: extent.size)
-      maskImage.lockFocus()
-      defer { maskImage.unlockFocus() }
-      NSColor.black.setFill()
-      NSBezierPath(rect: CGRect(origin: .zero, size: extent.size)).fill()
-      NSColor.white.setFill()
+      guard
+        let maskContext = CGContext(
+          data: nil,
+          width: Int(extent.width),
+          height: Int(extent.height),
+          bitsPerComponent: 8,
+          bytesPerRow: Int(extent.width) * 4,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+      else {
+        return image
+      }
+      maskContext.setFillColor(CGColor(gray: 0, alpha: 1))
+      maskContext.fill(CGRect(origin: .zero, size: extent.size))
       let minDimension = min(extent.width, extent.height)
       for stroke in strokes where !stroke.points.isEmpty {
+        let component: CGFloat = stroke.operation == .paint ? 1 : 0
+        let strokeColor = CGColor(gray: component, alpha: 1)
+        maskContext.setFillColor(strokeColor)
+        maskContext.setStrokeColor(strokeColor)
         let radius = max(4, CGFloat(stroke.brushRadius) * minDimension)
-        let path = NSBezierPath()
-        path.lineWidth = radius * 2
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
+        maskContext.setLineWidth(radius * 2)
+        maskContext.setLineCap(.round)
+        maskContext.setLineJoin(.round)
+        maskContext.beginPath()
         for (index, point) in stroke.points.enumerated() {
           let pixel = CGPoint(
             x: CGFloat(point.x) * extent.width,
             y: CGFloat(1 - point.y) * extent.height
           )
           if index == 0 {
-            path.move(to: pixel)
+            maskContext.move(to: pixel)
           } else {
-            path.line(to: pixel)
+            maskContext.addLine(to: pixel)
           }
         }
         if stroke.points.count == 1, let point = stroke.points.first {
           let pixelX = CGFloat(point.x) * extent.width
           let pixelY = CGFloat(1 - point.y) * extent.height
-          NSBezierPath(
-            ovalIn: CGRect(
+          maskContext.fillEllipse(
+            in: CGRect(
               x: pixelX - radius,
               y: pixelY - radius,
               width: radius * 2,
               height: radius * 2
             )
-          ).fill()
+          )
         } else {
-          NSColor.white.setStroke()
-          path.stroke()
+          maskContext.strokePath()
         }
       }
       guard
-        let maskCGImage = maskImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
+        let maskCGImage = maskContext.makeImage(),
         let filter = CIFilter(name: "CIBlendWithMask")
       else {
         return image
@@ -295,4 +329,69 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       return filter.outputImage ?? image
     #endif
   }
+
+  #if canImport(AppKit)
+    private func nsColor(_ color: RGBAColor) -> NSColor {
+      NSColor(
+        red: color.red,
+        green: color.green,
+        blue: color.blue,
+        alpha: color.alpha
+      )
+    }
+
+    private func dashPattern(_ style: AnnotationLineStyle) -> [CGFloat] {
+      switch style {
+      case .solid:
+        []
+      case .dashed:
+        [12, 8]
+      case .dashDot:
+        [12, 6, 2, 6]
+      }
+    }
+
+    private func drawArrow(
+      in rect: CGRect,
+      style: ArrowAnnotationStyle,
+      context: CGContext?
+    ) {
+      guard let context else { return }
+      let start = CGPoint(x: rect.minX, y: rect.minY)
+      let end = CGPoint(x: rect.maxX, y: rect.maxY)
+      context.setStrokeColor(nsColor(style.color).cgColor)
+      context.setLineWidth(style.lineWidth)
+      context.setLineCap(.round)
+      context.setLineJoin(.round)
+      context.move(to: start)
+      context.addLine(to: end)
+      if style.direction == .forward || style.direction == .both {
+        addArrowHead(context: context, tip: end, from: start, lineWidth: style.lineWidth)
+      }
+      if style.direction == .backward || style.direction == .both {
+        addArrowHead(context: context, tip: start, from: end, lineWidth: style.lineWidth)
+      }
+      context.strokePath()
+    }
+
+    private func addArrowHead(
+      context: CGContext,
+      tip: CGPoint,
+      from: CGPoint,
+      lineWidth: Double
+    ) {
+      let angle = atan2(tip.y - from.y, tip.x - from.x)
+      let distance = hypot(tip.x - from.x, tip.y - from.y)
+      let length = max(CGFloat(lineWidth) * 4, min(36, distance * 0.18))
+      for offset in [CGFloat.pi * 0.78, -CGFloat.pi * 0.78] {
+        context.move(to: tip)
+        context.addLine(
+          to: CGPoint(
+            x: tip.x + cos(angle + offset) * length,
+            y: tip.y + sin(angle + offset) * length
+          )
+        )
+      }
+    }
+  #endif
 }

@@ -28,7 +28,9 @@ public struct NormalizedCropRect: Equatable, Sendable, Codable {
     )
   }
 
-  public func pixelRect(imageWidth: Int, imageHeight: Int) -> (x: Int, y: Int, width: Int, height: Int) {
+  public func pixelRect(imageWidth: Int, imageHeight: Int) -> (
+    x: Int, y: Int, width: Int, height: Int
+  ) {
     let clamped = clamped()
     let width = max(1, Int((clamped.width * Double(imageWidth)).rounded()))
     let height = max(1, Int((clamped.height * Double(imageHeight)).rounded()))
@@ -83,6 +85,97 @@ public enum ImageAnnotationKind: String, Codable, Sendable, Equatable {
   case arrow
 }
 
+public struct RGBAColor: Equatable, Sendable, Codable {
+  public var red: Double
+  public var green: Double
+  public var blue: Double
+  public var alpha: Double
+
+  public init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+    self.red = min(max(red, 0), 1)
+    self.green = min(max(green, 0), 1)
+    self.blue = min(max(blue, 0), 1)
+    self.alpha = min(max(alpha, 0), 1)
+  }
+
+  public static let white = RGBAColor(red: 1, green: 1, blue: 1)
+  public static let black = RGBAColor(red: 0, green: 0, blue: 0)
+  public static let red = RGBAColor(red: 0.95, green: 0.2, blue: 0.2)
+  public static let blue = RGBAColor(red: 0.1, green: 0.45, blue: 0.95)
+  public static let yellow = RGBAColor(red: 1, green: 0.78, blue: 0.08)
+  public static let orange = RGBAColor(red: 1, green: 0.45, blue: 0.08)
+  public static let clear = RGBAColor(red: 0, green: 0, blue: 0, alpha: 0)
+}
+
+public enum AnnotationLineStyle: String, Codable, Sendable, Equatable, CaseIterable {
+  case solid
+  case dashed
+  case dashDot
+}
+
+public struct TextAnnotationStyle: Equatable, Sendable, Codable {
+  public var fontName: String
+  public var fontSize: Double
+  public var color: RGBAColor
+  public var isBold: Bool
+  public var isItalic: Bool
+
+  public init(
+    fontName: String = "Helvetica",
+    fontSize: Double = 28,
+    color: RGBAColor = .white,
+    isBold: Bool = true,
+    isItalic: Bool = false
+  ) {
+    self.fontName = fontName
+    self.fontSize = max(8, fontSize)
+    self.color = color
+    self.isBold = isBold
+    self.isItalic = isItalic
+  }
+}
+
+public struct RectangleAnnotationStyle: Equatable, Sendable, Codable {
+  public var strokeColor: RGBAColor
+  public var fillColor: RGBAColor
+  public var lineWidth: Double
+  public var lineStyle: AnnotationLineStyle
+
+  public init(
+    strokeColor: RGBAColor = .yellow,
+    fillColor: RGBAColor = .clear,
+    lineWidth: Double = 4,
+    lineStyle: AnnotationLineStyle = .solid
+  ) {
+    self.strokeColor = strokeColor
+    self.fillColor = fillColor
+    self.lineWidth = max(1, lineWidth)
+    self.lineStyle = lineStyle
+  }
+}
+
+public enum ArrowDirection: String, Codable, Sendable, Equatable, CaseIterable {
+  case forward
+  case backward
+  case both
+}
+
+public struct ArrowAnnotationStyle: Equatable, Sendable, Codable {
+  public var color: RGBAColor
+  public var lineWidth: Double
+  public var direction: ArrowDirection
+
+  public init(
+    color: RGBAColor = .orange,
+    lineWidth: Double = 4,
+    direction: ArrowDirection = .forward
+  ) {
+    self.color = color
+    self.lineWidth = max(1, lineWidth)
+    self.direction = direction
+  }
+}
+
 public struct MaskBrushPoint: Equatable, Sendable, Codable {
   public var x: Double
   public var y: Double
@@ -93,19 +186,27 @@ public struct MaskBrushPoint: Equatable, Sendable, Codable {
   }
 }
 
+public enum MaskStrokeOperation: String, Equatable, Sendable, Codable {
+  case paint
+  case erase
+}
+
 public struct MaskStroke: Identifiable, Equatable, Sendable, Codable {
   public let id: UUID
   public var points: [MaskBrushPoint]
   public var brushRadius: Double
+  public var operation: MaskStrokeOperation
 
   public init(
     id: UUID = UUID(),
     points: [MaskBrushPoint] = [],
-    brushRadius: Double = 0.03
+    brushRadius: Double = 0.03,
+    operation: MaskStrokeOperation = .paint
   ) {
     self.id = id
     self.points = points
     self.brushRadius = brushRadius
+    self.operation = operation
   }
 }
 
@@ -140,17 +241,26 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
   public var kind: ImageAnnotationKind
   public var text: String
   public var normalizedRect: NormalizedCropRect
+  public var textStyle: TextAnnotationStyle
+  public var rectangleStyle: RectangleAnnotationStyle
+  public var arrowStyle: ArrowAnnotationStyle
 
   public init(
     id: UUID = UUID(),
     kind: ImageAnnotationKind,
     text: String = "",
-    normalizedRect: NormalizedCropRect
+    normalizedRect: NormalizedCropRect,
+    textStyle: TextAnnotationStyle = TextAnnotationStyle(),
+    rectangleStyle: RectangleAnnotationStyle = RectangleAnnotationStyle(),
+    arrowStyle: ArrowAnnotationStyle = ArrowAnnotationStyle()
   ) {
     self.id = id
     self.kind = kind
     self.text = text
     self.normalizedRect = normalizedRect
+    self.textStyle = textStyle
+    self.rectangleStyle = rectangleStyle
+    self.arrowStyle = arrowStyle
   }
 }
 
