@@ -255,6 +255,97 @@ final class LibraryModel: ObservableObject {
     }
   }
 
+  func renameAsset(_ asset: ImageAsset, to proposedFilename: String) async -> ImageAsset? {
+    guard !isScanning else {
+      errorMessage = "Wait for the current folder scan to finish, then try again."
+      statusMessage = "Couldn't rename while scanning"
+      return nil
+    }
+    errorMessage = nil
+
+    do {
+      let plan = try AssetRenamer.plan(for: asset, proposedFilename: proposedFilename)
+      guard let rootURL = await activeRootContaining(asset.url) else {
+        throw LibraryModelError.assetRootUnavailable(asset.url)
+      }
+
+      isScanning = true
+      statusMessage = "Renaming \(asset.filename)..."
+      try FileManager.default.moveItem(at: plan.sourceURL, to: plan.destinationURL)
+
+      do {
+        _ = try await scanner.scan(
+          scopeURL: plan.destinationURL.deletingLastPathComponent(),
+          under: rootURL
+        )
+        try await repository.recordSuccessfulScan(at: Date())
+      } catch {
+        isScanning = false
+        try? await repository.recordIndexError(error.localizedDescription)
+        errorMessage =
+          "Renamed on disk, but Nivlo couldn't refresh the index: \(error.localizedDescription)"
+        statusMessage = "Renamed on disk · refresh failed"
+        return nil
+      }
+
+      let renameRecord = ProcessingHistoryRecord(
+        id: UUID(),
+        sourceAssetID: asset.id,
+        operation: .rename,
+        outputURL: plan.destinationURL,
+        parameters: [
+          "from": asset.filename,
+          "to": plan.filename,
+          "sourcePath": plan.sourceURL.path,
+        ],
+        createdAt: Date(),
+        derivativeKind: .original
+      )
+      do {
+        try await repository.appendProcessingHistory([renameRecord])
+        let records = try await repository.processingHistory(for: asset.id)
+        lineageByAssetID[asset.id] = AssetLineageBuilder.graph(
+          for: asset.id,
+          records: records
+        )
+      } catch {
+        errorMessage =
+          "Renamed on disk, but Nivlo couldn't record history: \(error.localizedDescription)"
+      }
+
+      do {
+        assets = try await repository.assets()
+        enrichments = Dictionary(
+          uniqueKeysWithValues: try await repository.enrichments()
+            .map { ($0.assetID, $0) }
+        )
+      } catch {
+        isScanning = false
+        try? await repository.recordIndexError(error.localizedDescription)
+        errorMessage =
+          "Renamed on disk, but Nivlo couldn't refresh the library: \(error.localizedDescription)"
+        statusMessage = "Renamed on disk · refresh failed"
+        return nil
+      }
+
+      updateSimilarityGroups()
+      let renamedAsset = assets.first { $0.id == asset.id }
+      let displayName = renamedAsset?.filename ?? plan.filename
+      isScanning = false
+      statusMessage = "\(assets.count) images indexed · renamed \(displayName)"
+      processingStatusMessage = "Renamed \(asset.filename) to \(displayName)"
+      await refreshIndexHealth()
+      await enrichAccessibleAssets()
+      return renamedAsset
+    } catch {
+      isScanning = false
+      try? await repository.recordIndexError(error.localizedDescription)
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn't rename asset"
+      return nil
+    }
+  }
+
   func lineage(for asset: ImageAsset) async -> AssetLineageGraph {
     if let cached = lineageByAssetID[asset.id] {
       return cached
@@ -317,27 +408,6 @@ final class LibraryModel: ObservableObject {
       createdAt: Date(),
       parentRecordID: parentRecordID,
       derivativeKind: .delivery
-    )
-    await appendHistoryRecords([record], assetID: asset.id)
-  }
-
-  func recordAIGeneration(
-    asset: ImageAsset,
-    result: GenerationResult,
-    parentRecordID: UUID? = nil
-  ) async {
-    let record = ProcessingHistoryRecord(
-      id: UUID(),
-      sourceAssetID: asset.id,
-      operation: .aiGenerate,
-      outputURL: result.outputURL,
-      parameters: result.parameters.merging([
-        "provider": result.providerID,
-        "model": result.model,
-      ]) { current, _ in current },
-      createdAt: Date(),
-      parentRecordID: parentRecordID,
-      derivativeKind: .aiVariant
     )
     await appendHistoryRecords([record], assetID: asset.id)
   }
@@ -605,6 +675,13 @@ final class LibraryModel: ObservableObject {
     }
   }
 
+  private func activeRootContaining(_ assetURL: URL) async -> URL? {
+    let activeRoots = await rootAccessManager.activeURLs()
+    return activeRoots
+      .filter { assetURL.isContained(in: $0) }
+      .max { $0.path.count < $1.path.count }
+  }
+
   private func enrichAccessibleAssets() async {
     guard !isEnriching else {
       return
@@ -779,6 +856,7 @@ extension ImageAsset {
 private enum LibraryModelError: Error, LocalizedError {
   case applicationSupportUnavailable
   case restoredAssetMissing(URL)
+  case assetRootUnavailable(URL)
 
   var errorDescription: String? {
     switch self {
@@ -786,6 +864,8 @@ private enum LibraryModelError: Error, LocalizedError {
       "The macOS Application Support directory is unavailable."
     case .restoredAssetMissing(let url):
       "Nivlo could not add \(url.lastPathComponent) back to the index."
+    case .assetRootUnavailable(let url):
+      "Access to \(url.deletingLastPathComponent().lastPathComponent) is unavailable. Re-authorize the folder and try again."
     }
   }
 }

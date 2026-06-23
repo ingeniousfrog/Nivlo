@@ -1,15 +1,7 @@
 import NivloDomain
 import SwiftUI
 
-enum AIConfiguration {
-  static let defaultProviderKey = "nivlo.ai.defaultProvider"
-  static let providerID = "openai-images"
-  static let apiKeyURL = URL(string: "https://synclip.ai/dev")!
-}
-
-struct AISettingsView: View {
-  @State private var apiKey = ""
-  @State private var statusMessage: String?
+struct AppSettingsView: View {
   @AppStorage("nivlo.library.refreshInterval")
   private var refreshIntervalRawValue = LibraryRefreshInterval.fifteenMinutes.rawValue
   @AppStorage("nivlo.language") private var languageRawValue = NivloLanguage.english.rawValue
@@ -36,36 +28,10 @@ struct AISettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-
-      Section(language.aiSettingsTitle) {
-        LabeledContent {
-          Link(language.aiGetAPIKeyLink, destination: AIConfiguration.apiKeyURL)
-        } label: {
-          Text(language.aiGetAPIKeyHint)
-        }
-        SecureField(language.aiAPIKey, text: $apiKey)
-        HStack {
-          Button(language.saveAPIKey) {
-            saveAPIKey()
-          }
-          .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          if let statusMessage {
-            Text(statusMessage)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-        Text(language.aiConfigureInSettings)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
     }
     .formStyle(.grouped)
     .padding(20)
     .frame(width: 460)
-    .onAppear {
-      apiKey = APIKeyStore.load(providerID: AIConfiguration.providerID) ?? ""
-    }
   }
 
   private func refreshIntervalTitle(_ interval: LibraryRefreshInterval) -> String {
@@ -80,18 +46,6 @@ struct AISettingsView: View {
       language.refreshEveryThirtyMinutes
     case .hourly:
       language.refreshHourly
-    }
-  }
-
-  private func saveAPIKey() {
-    do {
-      try APIKeyStore.save(
-        providerID: AIConfiguration.providerID,
-        apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-      )
-      statusMessage = language.apiKeySaved
-    } catch {
-      statusMessage = error.localizedDescription
     }
   }
 }

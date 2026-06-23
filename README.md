@@ -4,7 +4,7 @@
 
 **A local-first visual asset workbench for macOS.**
 
-Nivlo helps you discover, index, browse, search, organize, process, edit, and trace images and videos across your folders, projects, downloads, and external drives — without moving originals or uploading them by default.
+Nivlo helps you discover, index, browse, search, organize, rename, process, edit, and trace images and videos across your folders, projects, downloads, and external drives without moving originals or uploading them.
 
 Repository: [github.com/ingeniousfrog/Nivlo](https://github.com/ingeniousfrog/Nivlo)
 
@@ -28,12 +28,12 @@ Nivlo is not intended to replace the personal photo library and iCloud experienc
 |------|-------|--------------|
 | Storage model | Indexes authorized folders in place; originals keep their existing paths | Imports or references items through a managed Photos library |
 | Primary workflow | Project assets, search, batch processing, derivative exports, and lineage | Personal memories, iPhone capture, albums, sharing, and cross-device sync |
-| Cloud model | Local-first; cloud AI is explicitly opt-in | Deep iCloud Photos and Apple ecosystem integration |
+| Cloud model | Local-only product surface; no accounts, sync service, or external credentials | Deep iCloud Photos and Apple ecosystem integration |
 | Search and organization | Filename, path, OCR, metadata, color, source, exact duplicates, and perceptual similarity | People and pets, places, dates, media types, albums, Smart Albums, memories, and semantic search |
-| Editing direction | File-oriented editing, export presets, annotations, masks, and planned multi-model generative editing | Mature photo adjustments, Live Photo/Portrait/Cinematic workflows, extensions, and Apple Intelligence features |
+| Editing direction | File-oriented editing, export presets, annotations, masks, video trimming, and local delivery workflows | Mature photo adjustments, Live Photo/Portrait/Cinematic workflows, and extensions |
 | Provenance | Explicit processing history and derivative lineage | Non-destructive edits inside the Photos library |
 
-The strongest product position for Nivlo is therefore a **local visual asset workbench**, not a Photos clone: preserve folder ownership, make large mixed asset collections searchable, and connect conventional editing, batch delivery, and AI-generated variants in one traceable workflow.
+The strongest product position for Nivlo is therefore a **local visual asset workbench**, not a Photos clone: preserve folder ownership, make large mixed asset collections searchable, and connect renaming, conventional editing, and batch delivery in one traceable workflow.
 
 ---
 
@@ -43,7 +43,7 @@ The strongest product position for Nivlo is therefore a **local visual asset wor
 - **Explicit authorization** — You choose which folders to index. No default scan of the entire system.
 - **Stable file identity** — Assets are tracked by volume and file resource identifiers, so moved files can be reconciled across rescans.
 - **Rich local metadata** — EXIF, Vision OCR, perceptual hashes, dominant colors, and FTS-backed full-text search.
-- **Optional cloud AI** — Bring your own API key, stored in the macOS Keychain. No bundled model quota or default cloud analysis.
+- **No external credentials** — The app has no remote processing setup, account requirement, or external credential flow.
 
 ---
 
@@ -74,6 +74,7 @@ The strongest product position for Nivlo is therefore a **local visual asset wor
 
 - Group exact duplicates by SHA-256 content hash.
 - Surface perceptually similar images using connected-component clustering.
+- Rename original files in place with validation, conflict prevention, and processing-history records.
 
 ### Batch Process & Export
 
@@ -97,14 +98,12 @@ The strongest product position for Nivlo is therefore a **local visual asset wor
 - Export MP4, MOV, or WebM derivatives through FFmpeg.
 - Probe media with FFprobe; optionally export audio only.
 
-### AI Generation *(Integration foundation, not production-ready)*
+### Rename & Trace
 
-- Pluggable `GenerationAdapter` interface for text-to-image, image-to-image, inpainting, outpainting, background removal, super-resolution, and style variants.
-- The settings UI, Keychain storage, generation panel, result export, and lineage hooks are present.
-- The current direct OpenAI adapter is a prototype and does not yet represent the intended production integration.
-- **Next provider target:** the [Synclip.ai API Platform](https://synclip.ai/dev), used as one provider surface for multiple image-generation and image-editing models.
-- Image editing comes first; video-generation models are intentionally deferred until the image workflow, async jobs, error handling, and cost visibility are reliable.
-- API keys are stored in the macOS Keychain, not in the repository or index database.
+- Rename the original asset from the preview toolbar or card context menu.
+- Keep files in the same folder and preserve the current extension to avoid accidental format changes.
+- Prevent collisions with existing files before touching disk.
+- Refresh the local index after the rename and record the change in lineage.
 
 ---
 
@@ -115,7 +114,7 @@ Nivlo is designed around a few non-negotiable principles:
 - **No proprietary library migration** — Your files stay where you put them.
 - **No forced cloud sync, accounts, or multi-user collaboration.**
 - **No default scan of all system directories** — Access is always explicit.
-- **No bundled paid AI quota** — Cloud generation is opt-in with your own key.
+- **No external processing credentials** — There is no remote processing setup or credential storage path.
 - **Safe to delete derived data** — Removing `~/Library/Application Support/Nivlo/` clears the index, thumbnails, and tools cache without touching your original images or videos.
 
 ---
@@ -158,7 +157,7 @@ flowchart TB
 | Module | Role |
 |--------|------|
 | `NivloApp` | SwiftUI executable and application shell |
-| `NivloDomain` | Domain models, queries, edit sessions, generation interfaces |
+| `NivloDomain` | Domain models, queries, edit sessions, rename validation, and lineage |
 | `NivloIndexing` | Scanning, Spotlight candidates, FSEvents, bookmark authorization |
 | `NivloImaging` | Enrichment, batch processing, similarity analysis, FFmpeg/Picx |
 | `NivloPersistence` | SQLite repositories for assets, enrichment, and processing history |
@@ -327,23 +326,21 @@ Next editing milestone:
 - Undo/redo history, before/after comparison, zoom/pan, and saved edit sessions.
 - Better layer controls and mask-assisted local adjustments.
 
-### Phase 3 — Synclip.ai image intelligence *(next)*
+### Phase 3 — Local organization workbench *(next)*
 
-- Replace the direct provider prototype with a tested Synclip.ai adapter.
-- Fetch or configure an explicit model catalog and route capabilities by model.
-- Support image-to-image, inpainting, outpainting, background removal, super-resolution, and style variants before expanding scope.
-- Treat generation as asynchronous jobs with progress, cancellation, retry, timeout, and recoverable failure states.
-- Show model, estimated cost/credits, output parameters, prompt, source image, and mask before submission.
-- Store downloaded results locally and attach complete provenance to lineage records.
-- Keep uploads explicit and disclose when an operation leaves the Mac.
+- Batch rename with preview, numbering, token templates, conflict review, and undo.
+- Saved searches and smart collections for repeated project workflows.
+- Stronger duplicate/similar review with side-by-side comparison, keep/hide decisions, and folder-aware cleanup.
+- Metadata editing for local tags, ratings, notes, and project labels stored in Nivlo's index.
+- More robust file operations: move/copy to project folders, reveal all derivatives, and repair missing paths.
 
-### Phase 4 — Semantic organization, automation, and generative video *(later)*
+### Phase 4 — Local automation and delivery *(later)*
 
-- Semantic and image-to-image search.
-- Automatic clustering and project asset association.
-- Configurable local automation workflows.
-- Synclip.ai video generation and image-to-video only after the image API workflow is stable.
-- Queue/history UI for long-running generation and reusable multi-step workflows.
+- Reusable local workflows for resize, convert, watermark, rename, and export presets.
+- Watch-folder rules that turn incoming screenshots, downloads, and project assets into organized outputs.
+- Better history controls: undo where possible, snapshots of batch operations, and clearer failure recovery.
+- Optional on-device analysis where it can run locally and keep source files on the Mac.
+- Packaging polish: signed/notarized builds, updater flow, and first-run sample library.
 
 ---
 

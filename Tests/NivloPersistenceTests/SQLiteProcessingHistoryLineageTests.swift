@@ -24,12 +24,12 @@ struct SQLiteProcessingHistoryLineageTests {
     let child = ProcessingHistoryRecord(
       id: childID,
       sourceAssetID: assetID,
-      operation: .aiGenerate,
-      outputURL: URL(filePath: "/tmp/ai.png"),
-      parameters: ["provider": "openai-images"],
+      operation: .rename,
+      outputURL: URL(filePath: "/tmp/renamed.webp"),
+      parameters: ["from": "edit.webp", "to": "renamed.webp"],
       createdAt: Date(timeIntervalSince1970: 2),
       parentRecordID: parentID,
-      derivativeKind: .aiVariant
+      derivativeKind: .variant
     )
 
     let writer = try SQLiteAssetRepository(databaseURL: databaseURL)

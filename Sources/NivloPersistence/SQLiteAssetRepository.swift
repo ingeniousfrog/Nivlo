@@ -993,7 +993,7 @@ public actor SQLiteAssetRepository:
       )
     }
     let operationText = text(at: 3, from: statement)
-    guard let operation = ProcessingOperation(rawValue: operationText) else {
+    guard let operation = ProcessingOperation.storedValue(operationText) else {
       throw SQLiteRepositoryError.executionFailed(
         sql: sql,
         message: "Invalid processing operation: \(operationText)"
@@ -1014,7 +1014,7 @@ public actor SQLiteAssetRepository:
       sqlite3_column_type(statement, 8) == SQLITE_NULL
       ? DerivativeKind.delivery.rawValue
       : text(at: 8, from: statement)
-    let derivativeKind = DerivativeKind(rawValue: derivativeKindText) ?? .delivery
+    let derivativeKind = DerivativeKind.storedValue(derivativeKindText)
 
     return ProcessingHistoryRecord(
       id: id,

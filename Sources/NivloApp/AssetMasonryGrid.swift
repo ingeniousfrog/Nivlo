@@ -7,7 +7,9 @@ struct AssetMasonryGrid: View {
   let selectedAssetIDs: Set<AssetID>
   let isSelecting: Bool
   let availableWidth: CGFloat
+  let language: NivloLanguage
   let onOpen: (ImageAsset) -> Void
+  let onRename: (ImageAsset) -> Void
   let onToggleSelection: (AssetID) -> Void
 
   private let spacing: CGFloat = 16
@@ -30,7 +32,11 @@ struct AssetMasonryGrid: View {
             AssetCard(
               asset: asset,
               enrichment: enrichments[asset.id],
-              isSelected: selectedAssetIDs.contains(asset.id)
+              isSelected: selectedAssetIDs.contains(asset.id),
+              language: language,
+              onRename: {
+                onRename(asset)
+              }
             )
             .onTapGesture {
               if isSelecting {

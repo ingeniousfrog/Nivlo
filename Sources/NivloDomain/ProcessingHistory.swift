@@ -3,7 +3,7 @@ import Foundation
 public enum DerivativeKind: String, Codable, Equatable, Sendable, CaseIterable {
   case original
   case edit
-  case aiVariant
+  case variant
   case delivery
 }
 
@@ -16,7 +16,25 @@ public enum ProcessingOperation: String, Codable, Equatable, Sendable {
   case edit
   case videoEdit
   case audioExtract
-  case aiGenerate
+  case createVariant
+}
+
+extension DerivativeKind {
+  public static func storedValue(_ value: String) -> DerivativeKind {
+    if value == "aiVariant" {
+      return .variant
+    }
+    return DerivativeKind(rawValue: value) ?? .delivery
+  }
+}
+
+extension ProcessingOperation {
+  public static func storedValue(_ value: String) -> ProcessingOperation? {
+    if value == "aiGenerate" {
+      return .createVariant
+    }
+    return ProcessingOperation(rawValue: value)
+  }
 }
 
 public struct ProcessingHistoryRecord: Identifiable, Codable, Equatable, Sendable {

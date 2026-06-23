@@ -27,7 +27,7 @@ struct NivloApp: App {
     )
 
     Settings {
-      AISettingsView()
+      AppSettingsView()
         .nivloAppAppearance()
     }
   }

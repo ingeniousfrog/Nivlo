@@ -82,6 +82,16 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var path: String { text("Path", "路径") }
   var remove: String { text("Remove", "移除") }
   var removeFolderTitle: String { text("Remove folder from Nivlo?", "从 Nivlo 移除此文件夹？") }
+  var rename: String { text("Rename", "重命名") }
+  var renameAssetTitle: String { text("Rename asset", "重命名素材") }
+  var renameAssetHelp: String { text("Rename the original file in Finder", "重命名访达中的原始文件") }
+  var filename: String { text("Filename", "文件名") }
+  var renameRule: String {
+    text(
+      "Keep the original file extension. The file stays in the same folder.",
+      "请保留原文件扩展名；文件会留在同一文件夹中。"
+    )
+  }
   var reauthorizeFolder: String { text("Re-authorize Folder", "重新授权文件夹") }
   var removeFromSelection: String { text("Remove from export selection", "从导出选择中移除") }
   var searchPrompt: String { text("Search filename, path, OCR, keywords", "搜索文件名、路径、OCR、关键词") }
@@ -149,7 +159,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var tabExport: String { text("Export", "导出") }
   var tabTransform: String { text("Transform", "形变") }
   var tabLineage: String { text("Lineage", "谱系") }
-  var tabAI: String { text("AI", "AI") }
   var adjustExposure: String { text("Exposure", "曝光") }
   var adjustContrast: String { text("Contrast", "对比度") }
   var adjustSaturation: String { text("Saturation", "饱和度") }
@@ -248,25 +257,10 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var noLineageTitle: String { text("No derivatives yet", "尚无衍生文件") }
   var noLineageDescription: String {
     text(
-      "Exports, edits, and AI generations for this asset will appear here.",
-      "此素材的导出、编辑和 AI 生成记录会显示在这里。"
+      "Renames, exports, and edits for this asset will appear here.",
+      "此素材的重命名、导出和编辑记录会显示在这里。"
     )
   }
-  var aiAPIKey: String { text("API key", "API 密钥") }
-  var aiGetAPIKeyHint: String {
-    text("Get your API key at", "请前往以下地址获取 API Key")
-  }
-  var aiGetAPIKeyLink: String { text("synclip.ai/dev", "synclip.ai/dev") }
-  var aiCapability: String { text("Capability", "能力") }
-  var aiPrompt: String { text("Prompt", "提示词") }
-  var aiNegativePrompt: String { text("Negative prompt", "反向提示词") }
-  var aiStrength: String { text("Strength", "强度") }
-  var aiSteps: String { text("Steps", "步数") }
-  var aiGenerate: String { text("Generate", "生成") }
-  var aiGenerating: String { text("Generating…", "正在生成…") }
-  var aiGenerated: String { text("Generation complete", "生成完成") }
-  var saveAPIKey: String { text("Save API key", "保存 API 密钥") }
-  var apiKeySaved: String { text("API key saved", "API 密钥已保存") }
   var editorCanvasHint: String {
     text(
       "Choose a tool and edit directly on the canvas. Export writes the current result to a new file.",
@@ -308,13 +302,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var appearanceLight: String { text("Light", "亮色") }
   var appearanceDark: String { text("Dark", "深色") }
   var appearanceSystem: String { text("Match System", "跟随系统") }
-  var aiSettingsTitle: String { text("AI Generation", "AI 生成") }
-  var aiConfigureInSettings: String {
-    text("Configure your API key in Settings (⌘,).", "请在设置（⌘,）中填写 API Key。")
-  }
-  var aiMissingAPIKeyHint: String {
-    text("API key missing. Open Settings to add one.", "缺少 API Key，请打开设置进行配置。")
-  }
   var previewActive: String { text("Previewing", "预览中") }
   var previewActiveHint: String {
     text("Showing rendered preview. Exit preview to keep editing.", "正在显示渲染预览。退出预览后可继续编辑。")
@@ -440,6 +427,7 @@ struct LibraryView: View {
   @State private var selectedAssetIDs: Set<AssetID> = []
   @State private var isSelecting = false
   @State private var previewAsset: ImageAsset?
+  @State private var assetPendingRename: ImageAsset?
   @State private var folderPendingRemoval: LibraryRoot?
   @State private var folderFilter: String?
   @State private var sourceFilter: AssetSource?
@@ -575,7 +563,7 @@ struct LibraryView: View {
       await runAutomaticRefreshLoop()
     }
     .alert(
-      "Couldn’t index this folder",
+      "Nivlo couldn't finish that action",
       isPresented: Binding(
         get: { model.errorMessage != nil },
         set: { isPresented in
@@ -601,6 +589,9 @@ struct LibraryView: View {
         onHide: {
           hideAsset(asset)
         },
+        onRename: {
+          presentRenameSheet(for: asset)
+        },
         onImageExported: { result, request in
           Task {
             await model.recordEditedImageExport(
@@ -619,15 +610,15 @@ struct LibraryView: View {
             )
           }
         },
-        onAIGenerated: { result in
-          Task {
-            await model.recordAIGeneration(asset: asset, result: result)
-          }
-        },
         lineageProvider: {
           await model.lineage(for: asset)
         }
       )
+    }
+    .sheet(item: $assetPendingRename) { asset in
+      RenameAssetSheet(asset: asset, language: language) { proposedFilename in
+        await renameAsset(asset, to: proposedFilename)
+      }
     }
     .alert(
       language.removeFolderTitle,
@@ -856,8 +847,12 @@ struct LibraryView: View {
             selectedAssetIDs: selectedAssetIDs,
             isSelecting: isSelecting,
             availableWidth: max(0, proxy.size.width - 48),
+            language: language,
             onOpen: { asset in
               previewAsset = asset
+            },
+            onRename: { asset in
+              presentRenameSheet(for: asset)
             },
             onToggleSelection: { assetID in
               toggleSelection(assetID)
@@ -965,6 +960,21 @@ struct LibraryView: View {
     }
   }
 
+  private func presentRenameSheet(for asset: ImageAsset) {
+    assetPendingRename = asset
+  }
+
+  private func renameAsset(_ asset: ImageAsset, to proposedFilename: String) async -> Bool {
+    guard let renamedAsset = await model.renameAsset(asset, to: proposedFilename) else {
+      return false
+    }
+    selectedAssetIDs.remove(asset.id)
+    if previewAsset?.id == asset.id {
+      previewAsset = renamedAsset
+    }
+    return true
+  }
+
   @ViewBuilder
   private var hiddenAssetsContent: some View {
     if model.hiddenAssets.isEmpty {
@@ -1068,7 +1078,11 @@ struct LibraryView: View {
                   AssetCard(
                     asset: asset,
                     enrichment: model.enrichments[asset.id],
-                    isSelected: selectedAssetIDs.contains(asset.id)
+                    isSelected: selectedAssetIDs.contains(asset.id),
+                    language: language,
+                    onRename: {
+                      presentRenameSheet(for: asset)
+                    }
                   )
                   .onTapGesture {
                     if isSelecting {
@@ -1154,6 +1168,8 @@ struct AssetCard: View {
   let asset: ImageAsset
   let enrichment: AssetEnrichment?
   var isSelected = false
+  let language: NivloLanguage
+  let onRename: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -1212,10 +1228,13 @@ struct AssetCard: View {
     .contentShape(RoundedRectangle(cornerRadius: 16))
     .draggable(asset.url)
     .contextMenu {
-      Button("Show in Finder") {
+      Button(language.rename) {
+        onRename()
+      }
+      Button(language.showInFinder) {
         NSWorkspace.shared.activateFileViewerSelecting([asset.url])
       }
-      Button("Copy Path") {
+      Button(language.copyPath) {
         AssetClipboard.copyPath(asset.url)
       }
     }
@@ -1291,7 +1310,6 @@ private struct HiddenAssetCard: View {
 private enum AssetPreviewSidebarTab: String, CaseIterable, Identifiable {
   case inspector
   case lineage
-  case ai
 
   var id: String { rawValue }
 }
@@ -1303,9 +1321,9 @@ private struct AssetPreviewPanel: View {
   let toolsReady: Bool
   let onExport: () -> Void
   let onHide: () -> Void
+  let onRename: () -> Void
   let onImageExported: (PicxOptimizeResult, ImageEditRequest) -> Void
   let onVideoExported: (URL, VideoEditRequest) -> Void
-  let onAIGenerated: (GenerationResult) -> Void
   let lineageProvider: () async -> AssetLineageGraph
 
   @Environment(\.dismiss) private var dismiss
@@ -1341,6 +1359,9 @@ private struct AssetPreviewPanel: View {
           onExport: onExport,
           onEdit: {
             isEditorPresented = true
+          },
+          onRename: {
+            onRename()
           },
           onHide: {
             isHideConfirmationPresented = true
@@ -1385,7 +1406,6 @@ private struct AssetPreviewPanel: View {
           Picker("Sidebar", selection: $sidebarTab) {
             Text(language.inspector).tag(AssetPreviewSidebarTab.inspector)
             Text(language.tabLineage).tag(AssetPreviewSidebarTab.lineage)
-            Text(language.tabAI).tag(AssetPreviewSidebarTab.ai)
           }
           .pickerStyle(.segmented)
 
@@ -1401,12 +1421,6 @@ private struct AssetPreviewPanel: View {
             case .lineage:
               LineageView(graph: lineageGraph, language: language)
                 .frame(maxWidth: .infinity, minHeight: 320)
-            case .ai:
-              AIGenerationPanel(
-                asset: asset,
-                language: language,
-                onGenerated: onAIGenerated
-              )
             }
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1521,11 +1535,87 @@ private struct AssetPreviewPanel: View {
   }
 }
 
+private struct RenameAssetSheet: View {
+  let asset: ImageAsset
+  let language: NivloLanguage
+  let onRename: (String) async -> Bool
+
+  @Environment(\.dismiss) private var dismiss
+  @State private var proposedFilename: String
+  @State private var isRenaming = false
+
+  init(
+    asset: ImageAsset,
+    language: NivloLanguage,
+    onRename: @escaping (String) async -> Bool
+  ) {
+    self.asset = asset
+    self.language = language
+    self.onRename = onRename
+    _proposedFilename = State(initialValue: asset.filename)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(language.renameAssetTitle)
+          .font(.headline)
+        Text(asset.url.deletingLastPathComponent().path)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
+          .truncationMode(.middle)
+      }
+
+      TextField(language.filename, text: $proposedFilename)
+        .textFieldStyle(.roundedBorder)
+
+      Text(language.renameRule)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      HStack {
+        Spacer()
+        Button(language.cancel) {
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+        .disabled(isRenaming)
+
+        Button(language.rename) {
+          rename()
+        }
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(.defaultAction)
+        .disabled(
+          isRenaming
+            || proposedFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || proposedFilename == asset.filename
+        )
+      }
+    }
+    .padding(20)
+    .frame(width: 420)
+  }
+
+  private func rename() {
+    isRenaming = true
+    Task {
+      let didRename = await onRename(proposedFilename)
+      isRenaming = false
+      if didRename {
+        dismiss()
+      }
+    }
+  }
+}
+
 private struct AssetPreviewToolbar: View {
   let asset: ImageAsset
   let language: NivloLanguage
   let onExport: () -> Void
   let onEdit: () -> Void
+  let onRename: () -> Void
   let onHide: () -> Void
 
   var body: some View {
@@ -1536,6 +1626,13 @@ private struct AssetPreviewToolbar: View {
         Label(language.edit, systemImage: "slider.horizontal.3")
       }
       .help(language.editHelp)
+
+      Button {
+        onRename()
+      } label: {
+        Label(language.rename, systemImage: "pencil")
+      }
+      .help(language.renameAssetHelp)
 
       Button {
         NSWorkspace.shared.activateFileViewerSelecting([asset.url])
