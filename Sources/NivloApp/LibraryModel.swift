@@ -271,7 +271,7 @@ final class LibraryModel: ObservableObject {
 
       isScanning = true
       statusMessage = "Renaming \(asset.filename)..."
-      try FileManager.default.moveItem(at: plan.sourceURL, to: plan.destinationURL)
+      try AssetRenamer.rename(plan)
 
       do {
         _ = try await scanner.scan(

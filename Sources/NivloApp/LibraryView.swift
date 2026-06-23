@@ -83,13 +83,13 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var remove: String { text("Remove", "移除") }
   var removeFolderTitle: String { text("Remove folder from Nivlo?", "从 Nivlo 移除此文件夹？") }
   var rename: String { text("Rename", "重命名") }
-  var renameAssetTitle: String { text("Rename asset", "重命名素材") }
+  var renameAssetTitle: String { text("Rename original file", "重命名原始文件") }
   var renameAssetHelp: String { text("Rename the original file in Finder", "重命名访达中的原始文件") }
   var filename: String { text("Filename", "文件名") }
   var renameRule: String {
     text(
-      "Keep the original file extension. The file stays in the same folder.",
-      "请保留原文件扩展名；文件会留在同一文件夹中。"
+      "This directly renames the original file in Finder. No copy is created.",
+      "这会直接重命名访达中的原始文件，不会创建副本。"
     )
   }
   var reauthorizeFolder: String { text("Re-authorize Folder", "重新授权文件夹") }
@@ -583,35 +583,35 @@ struct LibraryView: View {
         enrichment: model.enrichments[asset.id],
         language: language,
         toolsReady: model.toolBootstrapper.isReady,
-        onExport: {
-          chooseExportFolder(assetIDs: [asset.id])
+        onExport: { currentAsset in
+          chooseExportFolder(assetIDs: [currentAsset.id])
         },
-        onHide: {
-          hideAsset(asset)
+        onHide: { currentAsset in
+          hideAsset(currentAsset)
         },
-        onRename: {
-          presentRenameSheet(for: asset)
+        onRename: { currentAsset, proposedFilename in
+          await renameAsset(currentAsset, to: proposedFilename)
         },
-        onImageExported: { result, request in
+        onImageExported: { currentAsset, result, request in
           Task {
             await model.recordEditedImageExport(
-              asset: asset,
+              asset: currentAsset,
               result: result,
               request: request
             )
           }
         },
-        onVideoExported: { outputURL, request in
+        onVideoExported: { currentAsset, outputURL, request in
           Task {
             await model.recordEditedVideoExport(
-              asset: asset,
+              asset: currentAsset,
               outputURL: outputURL,
               request: request
             )
           }
         },
-        lineageProvider: {
-          await model.lineage(for: asset)
+        lineageProvider: { currentAsset in
+          await model.lineage(for: currentAsset)
         }
       )
     }
@@ -964,15 +964,18 @@ struct LibraryView: View {
     assetPendingRename = asset
   }
 
-  private func renameAsset(_ asset: ImageAsset, to proposedFilename: String) async -> Bool {
+  private func renameAsset(
+    _ asset: ImageAsset,
+    to proposedFilename: String
+  ) async -> ImageAsset? {
     guard let renamedAsset = await model.renameAsset(asset, to: proposedFilename) else {
-      return false
+      return nil
     }
     selectedAssetIDs.remove(asset.id)
     if previewAsset?.id == asset.id {
       previewAsset = renamedAsset
     }
-    return true
+    return renamedAsset
   }
 
   @ViewBuilder
@@ -1319,15 +1322,17 @@ private struct AssetPreviewPanel: View {
   let enrichment: AssetEnrichment?
   let language: NivloLanguage
   let toolsReady: Bool
-  let onExport: () -> Void
-  let onHide: () -> Void
-  let onRename: () -> Void
-  let onImageExported: (PicxOptimizeResult, ImageEditRequest) -> Void
-  let onVideoExported: (URL, VideoEditRequest) -> Void
-  let lineageProvider: () async -> AssetLineageGraph
+  let onExport: (ImageAsset) -> Void
+  let onHide: (ImageAsset) -> Void
+  let onRename: (ImageAsset, String) async -> ImageAsset?
+  let onImageExported: (ImageAsset, PicxOptimizeResult, ImageEditRequest) -> Void
+  let onVideoExported: (ImageAsset, URL, VideoEditRequest) -> Void
+  let lineageProvider: (ImageAsset) async -> AssetLineageGraph
 
   @Environment(\.dismiss) private var dismiss
+  @State private var renamedAsset: ImageAsset?
   @State private var isEditorPresented = false
+  @State private var isRenamePresented = false
   @State private var isHideConfirmationPresented = false
   @State private var copyFeedback: CopyFeedback?
   @State private var copyFeedbackTask: Task<Void, Never>?
@@ -1335,8 +1340,12 @@ private struct AssetPreviewPanel: View {
   @State private var lineageGraph = AssetLineageGraph(
     assetID: AssetID(volumeIdentifier: "", fileIdentifier: ""), records: [])
 
+  private var displayedAsset: ImageAsset {
+    renamedAsset ?? asset
+  }
+
   private var details: AssetPreviewDetails {
-    AssetPreviewDetails(asset: asset)
+    AssetPreviewDetails(asset: displayedAsset)
   }
 
   var body: some View {
@@ -1354,14 +1363,16 @@ private struct AssetPreviewPanel: View {
         Spacer()
 
         AssetPreviewToolbar(
-          asset: asset,
+          asset: displayedAsset,
           language: language,
-          onExport: onExport,
+          onExport: {
+            onExport(displayedAsset)
+          },
           onEdit: {
             isEditorPresented = true
           },
           onRename: {
-            onRename()
+            isRenamePresented = true
           },
           onHide: {
             isHideConfirmationPresented = true
@@ -1385,12 +1396,12 @@ private struct AssetPreviewPanel: View {
       HStack(spacing: 0) {
         ZStack {
           Color(nsColor: .windowBackgroundColor)
-          if asset.mediaKind == .video {
-            AssetVideoPlayerView(asset: asset)
+          if displayedAsset.mediaKind == .video {
+            AssetVideoPlayerView(asset: displayedAsset)
               .padding(18)
           } else {
             AssetImageView(
-              asset: asset,
+              asset: displayedAsset,
               enrichment: enrichment,
               maxPixelSize: 1400,
               contentMode: .fit
@@ -1431,24 +1442,37 @@ private struct AssetPreviewPanel: View {
       }
     }
     .frame(minWidth: 1_120, minHeight: 680)
-    .task(id: asset.id) {
-      lineageGraph = await lineageProvider()
+    .task(id: displayedAsset.url) {
+      lineageGraph = await lineageProvider(displayedAsset)
+    }
+    .sheet(isPresented: $isRenamePresented) {
+      RenameAssetSheet(asset: displayedAsset, language: language) { proposedFilename in
+        guard let result = await onRename(displayedAsset, proposedFilename) else {
+          return nil
+        }
+        renamedAsset = result
+        return result
+      }
     }
     .sheet(isPresented: $isEditorPresented) {
-      switch asset.mediaKind {
+      switch displayedAsset.mediaKind {
       case .image:
         AssetEditorView(
-          asset: asset,
+          asset: displayedAsset,
           language: language,
           toolsReady: toolsReady,
-          onExport: onImageExported
+          onExport: { result, request in
+            onImageExported(displayedAsset, result, request)
+          }
         )
       case .video:
         VideoEditorView(
-          asset: asset,
+          asset: displayedAsset,
           language: language,
           toolsReady: toolsReady,
-          onExport: onVideoExported
+          onExport: { outputURL, request in
+            onVideoExported(displayedAsset, outputURL, request)
+          }
         )
       case .unsupported:
         ContentUnavailableView(
@@ -1463,11 +1487,11 @@ private struct AssetPreviewPanel: View {
       isPresented: $isHideConfirmationPresented
     ) {
       Button(language.hide, role: .destructive) {
-        onHide()
+        onHide(displayedAsset)
       }
       Button(language.cancel, role: .cancel) {}
     } message: {
-      Text(language.hideAssetMessage(asset.filename))
+      Text(language.hideAssetMessage(displayedAsset.filename))
     }
     .onDisappear {
       copyFeedbackTask?.cancel()
@@ -1538,21 +1562,23 @@ private struct AssetPreviewPanel: View {
 private struct RenameAssetSheet: View {
   let asset: ImageAsset
   let language: NivloLanguage
-  let onRename: (String) async -> Bool
+  let onRename: (String) async -> ImageAsset?
 
   @Environment(\.dismiss) private var dismiss
-  @State private var proposedFilename: String
+  @State private var proposedBasename: String
   @State private var isRenaming = false
 
   init(
     asset: ImageAsset,
     language: NivloLanguage,
-    onRename: @escaping (String) async -> Bool
+    onRename: @escaping (String) async -> ImageAsset?
   ) {
     self.asset = asset
     self.language = language
     self.onRename = onRename
-    _proposedFilename = State(initialValue: asset.filename)
+    _proposedBasename = State(
+      initialValue: asset.url.deletingPathExtension().lastPathComponent
+    )
   }
 
   var body: some View {
@@ -1567,8 +1593,14 @@ private struct RenameAssetSheet: View {
           .truncationMode(.middle)
       }
 
-      TextField(language.filename, text: $proposedFilename)
-        .textFieldStyle(.roundedBorder)
+      HStack(spacing: 6) {
+        TextField(language.filename, text: $proposedBasename)
+          .textFieldStyle(.roundedBorder)
+        if !asset.url.pathExtension.isEmpty {
+          Text(".\(asset.url.pathExtension)")
+            .foregroundStyle(.secondary)
+        }
+      }
 
       Text(language.renameRule)
         .font(.caption)
@@ -1589,7 +1621,7 @@ private struct RenameAssetSheet: View {
         .keyboardShortcut(.defaultAction)
         .disabled(
           isRenaming
-            || proposedFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || trimmedBasename.isEmpty
             || proposedFilename == asset.filename
         )
       }
@@ -1601,12 +1633,23 @@ private struct RenameAssetSheet: View {
   private func rename() {
     isRenaming = true
     Task {
-      let didRename = await onRename(proposedFilename)
+      let renamedAsset = await onRename(proposedFilename)
       isRenaming = false
-      if didRename {
+      if renamedAsset != nil {
         dismiss()
       }
     }
+  }
+
+  private var trimmedBasename: String {
+    proposedBasename.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var proposedFilename: String {
+    guard !asset.url.pathExtension.isEmpty else {
+      return trimmedBasename
+    }
+    return "\(trimmedBasename).\(asset.url.pathExtension)"
   }
 }
 

@@ -46,14 +46,41 @@ struct AssetRenamingTests {
       try AssetRenamer.plan(for: asset, proposedFilename: "after.png", fileExists: { _ in true })
     }
   }
+
+  @Test("moves the original file without creating a copy")
+  func movesOriginalFile() throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+      .appending(path: "NivloRenameTests-\(UUID().uuidString)")
+    let sourceURL = directory.appending(path: "before.png")
+    let expectedData = Data("original".utf8)
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    try expectedData.write(to: sourceURL)
+    defer {
+      try? fileManager.removeItem(at: directory)
+    }
+
+    let asset = makeAsset(url: sourceURL)
+    let plan = try AssetRenamer.plan(for: asset, proposedFilename: "after.png")
+
+    try AssetRenamer.rename(plan)
+
+    #expect(!fileManager.fileExists(atPath: sourceURL.path))
+    #expect(fileManager.fileExists(atPath: plan.destinationURL.path))
+    #expect(try Data(contentsOf: plan.destinationURL) == expectedData)
+  }
 }
 
 private func makeAsset(filename: String) -> ImageAsset {
   let url = URL(filePath: "/tmp/NivloRenameTests").appending(path: filename)
+  return makeAsset(url: url)
+}
+
+private func makeAsset(url: URL) -> ImageAsset {
   return ImageAsset(
     id: AssetID(volumeIdentifier: "volume", fileIdentifier: "file"),
     url: url,
-    filename: filename,
+    filename: url.lastPathComponent,
     contentType: "public.png",
     fileSize: 1_024,
     createdAt: Date(timeIntervalSince1970: 1_700_000_000),

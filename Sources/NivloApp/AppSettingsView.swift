@@ -30,8 +30,9 @@ struct AppSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(20)
-    .frame(width: 460)
+    .scrollDisabled(true)
+    .padding(16)
+    .frame(width: 420, height: 230)
   }
 
   private func refreshIntervalTitle(_ interval: LibraryRefreshInterval) -> String {

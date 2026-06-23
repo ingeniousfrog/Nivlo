@@ -30,6 +30,7 @@ struct NivloApp: App {
       AppSettingsView()
         .nivloAppAppearance()
     }
+    .windowResizability(.contentSize)
   }
 }
 

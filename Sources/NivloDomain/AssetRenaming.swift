@@ -90,4 +90,11 @@ public enum AssetRenamer {
       filename: filename
     )
   }
+
+  public static func rename(
+    _ plan: AssetRenamePlan,
+    fileManager: FileManager = .default
+  ) throws {
+    try fileManager.moveItem(at: plan.sourceURL, to: plan.destinationURL)
+  }
 }
