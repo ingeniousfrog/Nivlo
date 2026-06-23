@@ -605,12 +605,19 @@ struct AssetEditorView: View {
     let sourceURL = asset.url
     Task {
       do {
-        let image = try await Task.detached(priority: .userInitiated) {
-          try previewRenderer.renderPreviewImage(
+        let previewData = try await Task.detached(priority: .userInitiated) {
+          let image = try previewRenderer.renderPreviewImage(
             sourceURL: sourceURL,
             snapshot: snapshot
           )
+          guard let data = image.tiffRepresentation else {
+            throw ImageEditPreviewTransferError.missingImageData
+          }
+          return data
         }.value
+        guard let image = NSImage(data: previewData) else {
+          throw ImageEditPreviewTransferError.missingImageData
+        }
         renderedPreview = image
         isRenderedPreviewPresented = true
         exportMessage = language.previewActive
@@ -665,4 +672,15 @@ struct AssetEditorView: View {
     }
   }
 
+}
+
+private enum ImageEditPreviewTransferError: LocalizedError {
+  case missingImageData
+
+  var errorDescription: String? {
+    switch self {
+    case .missingImageData:
+      "Could not transfer the rendered preview image."
+    }
+  }
 }
