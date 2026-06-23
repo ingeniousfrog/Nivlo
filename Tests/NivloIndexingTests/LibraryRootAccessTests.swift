@@ -191,6 +191,23 @@ struct LibraryRootAccessTests {
     #expect(await manager.activeURL(for: rootID) == URL(filePath: "/new/photos"))
     #expect(await repository.libraryRoots().first?.pathHint == "/new/photos")
   }
+
+  @Test("reactivate restores access for a previously registered root")
+  func reactivateRestoresAccess() async throws {
+    let repository = InMemoryLibraryRootRepository()
+    let bookmarks = BookmarkProviderSpy()
+    let manager = LibraryRootAccessManager(
+      repository: repository,
+      bookmarkProvider: bookmarks
+    )
+    let root = try await manager.register(url: URL(filePath: "/tmp/photos"))
+    await manager.releaseAll()
+
+    let url = try await manager.reactivate(rootID: root.id)
+
+    #expect(url == URL(filePath: "/tmp/photos"))
+    #expect(await manager.activeURL(for: root.id) == URL(filePath: "/tmp/photos"))
+  }
 }
 
 private actor InMemoryLibraryRootRepository: LibraryRootRepository {

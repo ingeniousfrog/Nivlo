@@ -189,6 +189,15 @@ xattr -cr /Applications/Nivlo.app
 
 The DMG is an unsigned early-access build and is not Apple code-signed or notarized. For development or the latest commit, use the source workflow below.
 
+Installed builds store their library separately from `swift run Nivlo` development runs:
+
+| Install type | Application Support path |
+|--------------|-------------------------|
+| DMG / `.app` release | `~/Library/Application Support/dev.nivlo/` |
+| `swift run Nivlo` | `~/Library/Application Support/Nivlo/` |
+
+If a release install shows folders you added while developing from source, you are likely still using the older shared path from a previous build. Remove the old folder or re-authorize folders inside the installed app.
+
 ### Run from source
 
 From the repository root:
@@ -279,9 +288,10 @@ The manifest tracks FFmpeg, FFprobe, Picx, and a Python virtual environment. Che
 
 | Path | Contents |
 |------|----------|
-| `~/Library/Application Support/Nivlo/index.sqlite` | Main asset index and FTS tables |
-| `~/Library/Application Support/Nivlo/Thumbnails/` | Local thumbnail cache |
-| `~/Library/Application Support/Nivlo/tools/` | Bootstrapped FFmpeg, FFprobe, Picx, and support files |
+| `~/Library/Application Support/dev.nivlo/index.sqlite` | Release app index (DMG install) |
+| `~/Library/Application Support/Nivlo/index.sqlite` | Development index (`swift run`) |
+| `~/Library/Application Support/*/Thumbnails/` | Local thumbnail cache for that install |
+| `~/Library/Application Support/*/tools/` | Bootstrapped FFmpeg, FFprobe, Picx, and support files |
 
 All paths above are derivative. Deleting them does not remove or alter any original file on disk.
 

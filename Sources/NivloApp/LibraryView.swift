@@ -82,6 +82,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var path: String { text("Path", "路径") }
   var remove: String { text("Remove", "移除") }
   var removeFolderTitle: String { text("Remove folder from Nivlo?", "从 Nivlo 移除此文件夹？") }
+  var reauthorizeFolder: String { text("Re-authorize Folder", "重新授权文件夹") }
   var removeFromSelection: String { text("Remove from export selection", "从导出选择中移除") }
   var searchPrompt: String { text("Search filename, path, OCR, keywords", "搜索文件名、路径、OCR、关键词") }
   var select: String { text("Select", "选择") }
@@ -688,10 +689,14 @@ struct LibraryView: View {
           ForEach(model.roots) { root in
             FolderSidebarRow(
               root: root,
+              language: language,
               onRescan: {
                 Task {
                   await model.rescan(root)
                 }
+              },
+              onReauthorize: {
+                reauthorizeFolder(root)
               },
               onRevealInFinder: {
                 Task {
@@ -910,6 +915,28 @@ struct LibraryView: View {
     }
   }
 
+  private func reauthorizeFolder(_ root: LibraryRoot) {
+    let panel = NSOpenPanel()
+    panel.title = language.reauthorizeFolder
+    panel.prompt = language.reauthorizeFolder
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = false
+    let pathHint = URL(filePath: root.pathHint)
+    if FileManager.default.fileExists(atPath: pathHint.path) {
+      panel.directoryURL = pathHint
+    } else {
+      panel.directoryURL = pathHint.deletingLastPathComponent()
+    }
+    guard panel.runModal() == .OK, let url = panel.url else {
+      return
+    }
+    Task {
+      await model.reauthorizeFolder(root, at: url)
+    }
+  }
+
   private func removeFolder(_ root: LibraryRoot) {
     if folderFilter == root.pathHint {
       folderFilter = nil
@@ -1064,7 +1091,9 @@ struct LibraryView: View {
 
 private struct FolderSidebarRow: View {
   let root: LibraryRoot
+  let language: NivloLanguage
   let onRescan: () -> Void
+  let onReauthorize: () -> Void
   let onRevealInFinder: () -> Void
   let onRemove: () -> Void
 
@@ -1081,6 +1110,9 @@ private struct FolderSidebarRow: View {
       Menu {
         Button("Rescan Folder") {
           onRescan()
+        }
+        Button(language.reauthorizeFolder) {
+          onReauthorize()
         }
         Button("Show in Finder") {
           onRevealInFinder()
@@ -1104,6 +1136,9 @@ private struct FolderSidebarRow: View {
     .contextMenu {
       Button("Rescan Folder") {
         onRescan()
+      }
+      Button(language.reauthorizeFolder) {
+        onReauthorize()
       }
       Button("Show in Finder") {
         onRevealInFinder()

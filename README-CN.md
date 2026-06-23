@@ -189,6 +189,15 @@ xattr -cr /Applications/Nivlo.app
 
 当前 DMG 为未签名早期测试构建，尚未进行 Apple 代码签名与公证。如需开发调试或跟踪最新提交，请使用下方源码运行方式。
 
+已安装的正式版与 `swift run Nivlo` 开发运行使用不同的 Application Support 目录：
+
+| 安装方式 | Application Support 路径 |
+|----------|-------------------------|
+| DMG / `.app` 正式版 | `~/Library/Application Support/dev.nivlo/` |
+| `swift run Nivlo` 开发运行 | `~/Library/Application Support/Nivlo/` |
+
+如果安装正式版后仍看到开发时添加的文件夹，可能是旧版本共用同一路径所致。可删除旧目录，或在正式版中对文件夹执行「重新授权文件夹」。
+
 ### 从源码运行
 
 在仓库根目录执行：
@@ -279,9 +288,10 @@ VERSION=0.1.0 Scripts/package-dmg.sh
 
 | 路径 | 内容 |
 |------|------|
-| `~/Library/Application Support/Nivlo/index.sqlite` | 主资产索引与 FTS 表 |
-| `~/Library/Application Support/Nivlo/Thumbnails/` | 本地缩略图缓存 |
-| `~/Library/Application Support/Nivlo/tools/` | 自动安装的 FFmpeg、FFprobe、Picx 及支持文件 |
+| `~/Library/Application Support/dev.nivlo/index.sqlite` | 正式版（DMG 安装）索引 |
+| `~/Library/Application Support/Nivlo/index.sqlite` | 开发版（`swift run`）索引 |
+| `~/Library/Application Support/*/Thumbnails/` | 对应安装实例的本地缩略图缓存 |
+| `~/Library/Application Support/*/tools/` | 自动安装的 FFmpeg、FFprobe、Picx 及支持文件 |
 
 以上路径均为衍生数据。删除它们不会移除或修改磁盘上的任何原始文件。
 

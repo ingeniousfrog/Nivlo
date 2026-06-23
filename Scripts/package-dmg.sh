@@ -32,6 +32,20 @@ mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 cp "${EXECUTABLE}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
+ICON_SOURCE="${ROOT_DIR}/Packaging/AppIcon-1024.png"
+ICONSET="${DIST_DIR}/AppIcon.iconset"
+if [[ -f "${ICON_SOURCE}" ]]; then
+  rm -rf "${ICONSET}"
+  mkdir -p "${ICONSET}"
+  for size in 16 32 128 256 512; do
+    sips -z "${size}" "${size}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
+    double=$((size * 2))
+    sips -z "${double}" "${double}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns "${ICONSET}" -o "${APP_DIR}/Contents/Resources/AppIcon.icns"
+  rm -rf "${ICONSET}"
+fi
+
 cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -57,6 +71,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

@@ -42,6 +42,9 @@ let package = Package(
         "NivloIndexing",
         "NivloPersistence",
       ],
+      resources: [
+        .copy("Resources")
+      ],
       linkerSettings: [
         .linkedFramework("AVKit")
       ]

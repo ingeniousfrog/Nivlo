@@ -88,6 +88,17 @@ public struct LibraryRootRestoreResult: Equatable, Sendable {
   }
 }
 
+public enum LibraryRootAccessError: Error, LocalizedError, Sendable {
+  case securityScopeUnavailable(URL)
+
+  public var errorDescription: String? {
+    switch self {
+    case .securityScopeUnavailable(let url):
+      "Could not access \(url.lastPathComponent). Re-authorize the folder in Nivlo."
+    }
+  }
+}
+
 public actor LibraryRootAccessManager {
   private struct AccessRecord {
     let root: LibraryRoot
@@ -112,7 +123,10 @@ public actor LibraryRootAccessManager {
 
   public func register(url: URL) async throws -> LibraryRoot {
     let url = url.standardizedFileURL
-    let startedSecurityScope = bookmarkProvider.startAccessing(url)
+    guard bookmarkProvider.startAccessing(url) else {
+      throw LibraryRootAccessError.securityScopeUnavailable(url)
+    }
+    let startedSecurityScope = true
     do {
       let existingRoot = try await repository.libraryRoots()
         .first { $0.pathHint == url.path }
@@ -182,6 +196,17 @@ public actor LibraryRootAccessManager {
     activeRoots[rootID]?.url
   }
 
+  public func reactivate(rootID: UUID) async throws -> URL {
+    guard let root = try await repository.libraryRoots().first(where: { $0.id == rootID })
+    else {
+      throw LibraryRootAccessError.securityScopeUnavailable(
+        URL(filePath: "/unknown")
+      )
+    }
+    let resolved = try bookmarkProvider.resolveBookmark(root.bookmarkData)
+    return try await activate(root, resolved: resolved).url
+  }
+
   public func remove(rootID: UUID) async throws {
     try await repository.removeLibraryRoot(id: rootID)
     if let active = activeRoots.removeValue(forKey: rootID),
@@ -203,7 +228,10 @@ public actor LibraryRootAccessManager {
     resolved: ResolvedBookmark
   ) async throws -> ActiveLibraryRoot {
     let url = resolved.url.standardizedFileURL
-    let startedSecurityScope = bookmarkProvider.startAccessing(url)
+    guard bookmarkProvider.startAccessing(url) else {
+      throw LibraryRootAccessError.securityScopeUnavailable(url)
+    }
+    let startedSecurityScope = true
     do {
       let activeRoot: LibraryRoot
       let needsPathUpdate = url.path != root.pathHint

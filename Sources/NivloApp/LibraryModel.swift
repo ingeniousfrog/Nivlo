@@ -130,11 +130,36 @@ final class LibraryModel: ObservableObject {
   }
 
   func rescan(_ root: LibraryRoot) async {
-    guard let rootURL = await rootAccessManager.activeURL(for: root.id) else {
-      errorMessage = "Access to \(root.displayName) is unavailable."
+    let rootURL: URL?
+    if let activeURL = await rootAccessManager.activeURL(for: root.id) {
+      rootURL = activeURL
+    } else {
+      rootURL = try? await rootAccessManager.reactivate(rootID: root.id)
+    }
+    guard let rootURL else {
+      errorMessage =
+        "Access to \(root.displayName) is unavailable. Choose Re-authorize Folder and grant access again."
       return
     }
     await scanActiveRoot(rootURL)
+  }
+
+  func reauthorizeFolder(_ root: LibraryRoot, at url: URL) async {
+    guard !isScanning else {
+      return
+    }
+    errorMessage = nil
+    statusMessage = "Re-authorizing \(root.displayName)…"
+    do {
+      _ = try await rootAccessManager.register(url: url)
+      roots = try await repository.libraryRoots()
+      await startWatchingActiveRoots()
+      await scanActiveRoot(url)
+    } catch {
+      try? await repository.recordIndexError(error.localizedDescription)
+      errorMessage = error.localizedDescription
+      statusMessage = "Couldn’t re-authorize folder"
+    }
   }
 
   func activeURL(for root: LibraryRoot) async -> URL? {
@@ -665,7 +690,17 @@ final class LibraryModel: ObservableObject {
     }
     return
       applicationSupportURL
-      .appending(path: "Nivlo", directoryHint: .isDirectory)
+      .appending(path: applicationSupportFolderName(), directoryHint: .isDirectory)
+  }
+
+  private static func applicationSupportFolderName() -> String {
+    if Bundle.main.bundleURL.pathExtension == "app",
+      let bundleIdentifier = Bundle.main.bundleIdentifier,
+      !bundleIdentifier.isEmpty
+    {
+      return bundleIdentifier
+    }
+    return "Nivlo"
   }
 
   private static func makeDependencies() -> LibraryDependencies {
