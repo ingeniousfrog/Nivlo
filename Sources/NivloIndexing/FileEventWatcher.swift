@@ -9,7 +9,7 @@ public protocol FileEventWatch: Sendable {
 public protocol FileEventWatching: Sendable {
   func start(
     rootURL: URL,
-    handler: @escaping ([FileSystemEvent]) -> Void
+    handler: @escaping @Sendable ([FileSystemEvent]) -> Void
   ) throws -> any FileEventWatch
 }
 
@@ -72,10 +72,19 @@ public actor LibraryRootFileEventMonitor {
     }
 
     for root in normalizedRoots where watches[root] == nil {
-      watches[root] = try watcher.start(rootURL: root) { [weak self] events in
-        Task {
-          await self?.record(events, for: root)
-        }
+      watches[root] = try watcher.start(
+        rootURL: root,
+        handler: eventHandler(for: root)
+      )
+    }
+  }
+
+  nonisolated private func eventHandler(
+    for rootURL: URL
+  ) -> @Sendable ([FileSystemEvent]) -> Void {
+    { events in
+      Task {
+        await self.record(events, for: rootURL)
       }
     }
   }
@@ -138,7 +147,7 @@ public final class FSEventsFileEventWatcher: FileEventWatching {
 
   public func start(
     rootURL: URL,
-    handler: @escaping ([FileSystemEvent]) -> Void
+    handler: @escaping @Sendable ([FileSystemEvent]) -> Void
   ) throws -> any FileEventWatch {
     let callback: FSEventStreamCallback = {
       _,
@@ -222,9 +231,9 @@ public final class FSEventsFileEventWatcher: FileEventWatching {
 }
 
 private final class EventHandlerBox: @unchecked Sendable {
-  let handler: ([FileSystemEvent]) -> Void
+  let handler: @Sendable ([FileSystemEvent]) -> Void
 
-  init(handler: @escaping ([FileSystemEvent]) -> Void) {
+  init(handler: @escaping @Sendable ([FileSystemEvent]) -> Void) {
     self.handler = handler
   }
 }

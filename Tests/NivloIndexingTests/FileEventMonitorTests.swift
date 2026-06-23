@@ -75,11 +75,11 @@ struct FileEventMonitorTests {
 
 private final class CapturingFileEventWatcher: FileEventWatching, @unchecked Sendable {
   private let lock = NSLock()
-  private var handlers: [URL: ([FileSystemEvent]) -> Void] = [:]
+  private var handlers: [URL: @Sendable ([FileSystemEvent]) -> Void] = [:]
 
   func start(
     rootURL: URL,
-    handler: @escaping ([FileSystemEvent]) -> Void
+    handler: @escaping @Sendable ([FileSystemEvent]) -> Void
   ) throws -> any FileEventWatch {
     lock.lock()
     defer { lock.unlock() }
