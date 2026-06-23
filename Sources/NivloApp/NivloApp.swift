@@ -39,11 +39,6 @@ private final class NivloAppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     AppAppearance.applyStoredAppearance()
-    if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-      let icon = NSImage(contentsOf: iconURL)
-    {
-      NSApp.applicationIconImage = icon
-    }
     NSApp.setActivationPolicy(.regular)
     DispatchQueue.main.async { [weak self] in
       self?.ensureVisibleMainWindow()

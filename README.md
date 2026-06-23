@@ -8,8 +8,6 @@ Nivlo helps you discover, index, browse, search, organize, rename, process, edit
 
 Repository: [github.com/ingeniousfrog/Nivlo](https://github.com/ingeniousfrog/Nivlo)
 
-> Screenshots coming soon.
->
 > Project status last verified against the repository on June 23, 2026.
 
 ---
@@ -61,49 +59,48 @@ The strongest product position for Nivlo is therefore a **local visual asset wor
 - Watch active library roots with FSEvents, coalesce bursts, and rescan only affected folders when possible.
 - Invalidate and rebuild derived metadata when source files change; preserve records when access is temporarily lost.
 
-### Browse & Search
+### Browse, Preview & Search
 
 - Browse indexed assets in a native SwiftUI grid with masonry layout support.
+- Open a full preview for images and videos with Edit, Rename, Export, Hide, and Finder actions.
+- **Inspector** panel with structured metadata: file facts, image/video specs, RGB histogram and clipping (images), EXIF capture data when enriched, dominant-color swatches, keyword tags, and copyable path.
+- **Lineage** panel for processing history tied to the selected asset.
 - Search by filename, path, OCR text, and keywords via SQLite FTS.
 - Smart views for screenshots, recent downloads, recently modified images, and large files.
 - Filter by time, folder, format, dimensions, file size, color, keywords, OCR text, and source.
 - Sort by date, filename, size, dimensions, and folder.
-- Built-in English and Chinese UI.
+- Hide assets from the main library without deleting originals; review them in **Hidden Files**.
+- Built-in English and Chinese UI, plus light / dark / system appearance in Settings.
 
 ### Organize
 
 - Group exact duplicates by SHA-256 content hash.
 - Surface perceptually similar images using connected-component clustering.
-- Rename original files in place with validation, conflict prevention, and processing-history records.
+- Rename original files in place from the preview toolbar or card context menu, with validation, conflict prevention, basename-only editing, and processing-history records.
+- Re-authorize folders when bookmarks expire or external volumes reconnect.
 
 ### Batch Process & Export
 
-- Write processed outputs to a chosen directory without modifying originals.
-- Convert to PNG, JPEG, WebP, or AVIF (when supported by ImageIO on your Mac).
-- Apply compression quality, resizing, and batch filename templates with overwrite-safe suffixes.
+- Select multiple images in the library and export them to a chosen output folder without modifying originals.
+- The batch engine supports PNG, JPEG, WebP, and AVIF with quality, resize, and filename templates; the current library UI exports selected images as JPEG.
 - Copy file paths or Markdown image references, reveal files in Finder, and drag file URLs from the grid.
 - Track processing history and derivative lineage from source to export.
 
 ### Image Editor *(Phase 2 — Beta)*
 
-- Open indexed images in a native editor canvas.
-- Crop, rotate, and flip; adjust exposure, contrast, saturation, and warmth.
-- Add editable text, rectangle, and arrow annotations; paint and erase masks.
-- Preview the composed result and export optimized derivatives through Picx.
-- Track the exported edit in the asset lineage.
+- Open indexed images in a native editor with geometry, adjust, annotate, mask, and export tools.
+- Crop, rotate, flip, undo/redo, before/after comparison, zoom/pan, and saved edit sessions.
+- **Basic** adjustments: exposure, contrast, saturation, warmth, tint, highlights, shadows, clarity, vibrance, sharpen, noise reduction, and vignette.
+- **Levels**, **curves**, and per-band **HSL** controls, plus built-in and user-saved adjustment presets.
+- Advanced edits use an explicit rendered preview when needed; Picx exports optimized derivatives.
+- Add editable text, rectangle, and arrow annotations; paint mask strokes with local adjustments.
+- Track exported edits in asset lineage.
 
 ### Video Editor *(Phase 2 — Beta)*
 
-- Preview, trim, crop, scale, rotate, and change frame rate.
-- Export MP4, MOV, or WebM derivatives through FFmpeg.
-- Probe media with FFprobe; optionally export audio only.
-
-### Rename & Trace
-
-- Rename the original asset from the preview toolbar or card context menu.
-- Keep files in the same folder and preserve the current extension to avoid accidental format changes.
-- Prevent collisions with existing files before touching disk.
-- Refresh the local index after the rename and record the change in lineage.
+- Preview with timeline thumbnails and waveform; trim, crop, scale, rotate, and change frame rate.
+- Export MP4, MOV, or WebM derivatives through FFmpeg; probe media with FFprobe.
+- Hardware codec detection, volume fades, and optional audio-only export.
 
 ---
 
@@ -115,7 +112,7 @@ Nivlo is designed around a few non-negotiable principles:
 - **No forced cloud sync, accounts, or multi-user collaboration.**
 - **No default scan of all system directories** — Access is always explicit.
 - **No external processing credentials** — There is no remote processing setup or credential storage path.
-- **Safe to delete derived data** — Removing `~/Library/Application Support/Nivlo/` clears the index, thumbnails, and tools cache without touching your original images or videos.
+- **Safe to delete derived data** — Removing the Application Support folder for your install (`dev.nivlo` for the release app, `Nivlo` for `swift run`) clears the index, thumbnails, and tools cache without touching your original images or videos.
 
 ---
 
@@ -209,9 +206,9 @@ swift run Nivlo
 
 1. **Authorize folders** — Choose the directories you want Nivlo to index.
 2. **Wait for indexing** — Nivlo scans authorized roots, generates thumbnails, and enriches metadata in the background.
-3. **Browse and work** — Search, filter, batch-export, or open assets in the image/video editors.
+3. **Browse and work** — Search, filter, inspect metadata, batch-export, rename originals, or open assets in the image/video editors.
 
-On first launch, Nivlo also bootstraps external tools (FFmpeg, FFprobe, and Picx) into Application Support. Video editing and Picx-based image export depend on this step completing successfully.
+On first launch, Nivlo bootstraps external tools (FFmpeg, FFprobe, and Picx) into that install's Application Support folder. Video editing and Picx-based image export depend on this step completing successfully. Use **Validate Index** in the sidebar to review index health, retry failed enrichments, and repair access issues.
 
 ---
 
@@ -269,13 +266,14 @@ To build a release `.app` bundle and `.dmg` locally:
 VERSION=0.1.0 Scripts/package-dmg.sh
 ```
 
-Artifacts are written to `dist/Nivlo.app` and `dist/Nivlo.dmg`. Pushing a `v*` git tag triggers the same packaging workflow on GitHub Actions and uploads the DMG to Releases.
+Artifacts are written to `dist/Nivlo.app` and `dist/Nivlo.dmg`. The DMG uses a styled drag-to-Applications layout and bundles the app icon. Pushing a `v*` git tag triggers the same packaging workflow on GitHub Actions and uploads the DMG to Releases.
 
 ### External tools
 
-Managed by `ToolBootstrapper` and installed to:
+Managed by `ToolBootstrapper` and installed under the active Application Support directory for that install, for example:
 
 ```text
+~/Library/Application Support/dev.nivlo/tools/
 ~/Library/Application Support/Nivlo/tools/
 ```
 
@@ -314,19 +312,26 @@ Remaining work is primarily hardening: large-library performance, clearer index/
 
 Already available:
 
-- Non-destructive image geometry, basic global adjustments, annotations, masks, preview, and export.
-- Video preview, trim, transform, export, and audio extraction.
-- Processing history and a basic lineage view.
+- Image geometry, annotations, masks, undo/redo, before/after comparison, zoom/pan, and saved edit sessions.
+- Basic global adjustments plus levels, curves, HSL bands, presets, and rendered preview for advanced edits.
+- Video preview, timeline, trim, transform, export, audio extraction, and FFprobe-backed metadata.
+- Asset preview with Inspector and Lineage panels.
+- Processing history and derivative lineage records.
 
 Next editing milestone:
 
-- RGB and luminance histograms with interactive black point, white point, and gamma controls.
-- Levels and curves, plus HSL/HSV color-range editing rather than only whole-image saturation.
-- White balance/tint, highlights/shadows, clarity/definition, sharpen, noise reduction, vignette, and reusable presets.
-- Undo/redo history, before/after comparison, zoom/pan, and saved edit sessions.
-- Better layer controls and mask-assisted local adjustments.
+- Stronger mask-assisted local adjustments and layer workflows.
+- Histogram-driven editing controls inside the editor, not just inspection.
+- Better batch-export UI over the existing multi-format batch engine.
+- Broader format coverage and performance hardening for large edits.
 
 ### Phase 3 — Local organization workbench *(next)*
+
+Already available:
+
+- In-place rename for individual originals with validation, extension safety, and lineage updates.
+
+Planned next:
 
 - Batch rename with preview, numbering, token templates, conflict review, and undo.
 - Saved searches and smart collections for repeated project workflows.

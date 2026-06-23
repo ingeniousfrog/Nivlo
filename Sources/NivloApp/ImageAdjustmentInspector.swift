@@ -1,5 +1,4 @@
 import NivloDomain
-import NivloImaging
 import SwiftUI
 
 private enum AdjustmentInspectorSection: String, CaseIterable, Identifiable {
@@ -27,7 +26,6 @@ private enum AdjustmentInspectorSection: String, CaseIterable, Identifiable {
 struct ImageAdjustmentInspector: View {
   let language: NivloLanguage
   @Binding var settings: ImageAdjustmentSettings
-  let histogram: ImageHistogram?
   let requiresFullRenderPreview: Bool
   let isRenderingPreview: Bool
   let isRenderedPreviewPresented: Bool
@@ -46,23 +44,6 @@ struct ImageAdjustmentInspector: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      if let histogram {
-        Text(language.sourceHistogram)
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-        HistogramView(histogram: histogram)
-        HStack {
-          clippingLabel(
-            language.shadowClipping,
-            count: histogram.shadowClippingCount
-          )
-          clippingLabel(
-            language.highlightClipping,
-            count: histogram.highlightClippingCount
-          )
-        }
-      }
-
       renderPreviewBar
 
       DisclosureGroup(language.adjustmentPreset, isExpanded: $isPresetExpanded) {
@@ -223,12 +204,6 @@ struct ImageAdjustmentInspector: View {
     }
   }
 
-  private func clippingLabel(_ title: String, count: Int) -> some View {
-    Text("\(title): \(count)")
-      .font(.caption2)
-      .foregroundStyle(count > 0 ? Color.orange : Color.secondary)
-  }
-
   private func channelPicker(
     selection: Binding<ImageColorChannel>
   ) -> some View {
@@ -302,48 +277,6 @@ struct ImageAdjustmentInspector: View {
         )
       }
     )
-  }
-}
-
-private struct HistogramView: View {
-  let histogram: ImageHistogram
-
-  var body: some View {
-    Canvas { context, size in
-      draw(histogram.red.bins, color: .red, context: &context, size: size)
-      draw(histogram.green.bins, color: .green, context: &context, size: size)
-      draw(histogram.blue.bins, color: .blue, context: &context, size: size)
-      draw(
-        histogram.luminance.bins,
-        color: .primary.opacity(0.8),
-        context: &context,
-        size: size
-      )
-    }
-    .frame(height: 78)
-    .padding(8)
-    .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-    .accessibilityLabel("RGB and luminance histogram")
-  }
-
-  private func draw(
-    _ bins: [Int],
-    color: Color,
-    context: inout GraphicsContext,
-    size: CGSize
-  ) {
-    let maximum = max(1, bins.max() ?? 1)
-    var path = Path()
-    for (index, count) in bins.enumerated() {
-      let x = CGFloat(index) / 255 * size.width
-      let y = size.height - CGFloat(count) / CGFloat(maximum) * size.height
-      if index == 0 {
-        path.move(to: CGPoint(x: x, y: y))
-      } else {
-        path.addLine(to: CGPoint(x: x, y: y))
-      }
-    }
-    context.stroke(path, with: .color(color), lineWidth: 1)
   }
 }
 

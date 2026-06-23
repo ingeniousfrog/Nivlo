@@ -281,19 +281,25 @@ public struct VideoProbeInfo: Sendable, Equatable {
   public let height: Int
   public let frameRate: Double
   public let hasAudio: Bool
+  public let videoCodec: String?
+  public let audioCodec: String?
 
   public init(
     durationSeconds: Double,
     width: Int,
     height: Int,
     frameRate: Double,
-    hasAudio: Bool
+    hasAudio: Bool,
+    videoCodec: String? = nil,
+    audioCodec: String? = nil
   ) {
     self.durationSeconds = durationSeconds
     self.width = width
     self.height = height
     self.frameRate = frameRate
     self.hasAudio = hasAudio
+    self.videoCodec = videoCodec?.nilIfBlank
+    self.audioCodec = audioCodec?.nilIfBlank
   }
 }
 
@@ -311,5 +317,12 @@ public struct FFmpegExportProgress: Sendable, Equatable {
       return nil
     }
     return min(1, max(0, processedSeconds / totalSeconds))
+  }
+}
+
+private extension String {
+  var nilIfBlank: String? {
+    let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }

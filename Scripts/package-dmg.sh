@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nivlo"
 DIST_DIR="${ROOT_DIR}/dist"
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
+DMG_RW_PATH="${DIST_DIR}/${APP_NAME}-temp.dmg"
 DMG_PATH="${DIST_DIR}/${APP_NAME}.dmg"
 BUILD_CONFIG="${BUILD_CONFIG:-release}"
 
@@ -26,24 +27,28 @@ if [[ ! -f "${EXECUTABLE}" ]]; then
   exit 1
 fi
 
-rm -rf "${APP_DIR}" "${DMG_PATH}"
+rm -rf "${APP_DIR}" "${DMG_PATH}" "${DMG_RW_PATH}"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 cp "${EXECUTABLE}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
 ICON_SOURCE="${ROOT_DIR}/Packaging/AppIcon-1024.png"
+ICON_SQUARE="${DIST_DIR}/AppIcon-1024-square.png"
 ICONSET="${DIST_DIR}/AppIcon.iconset"
 if [[ -f "${ICON_SOURCE}" ]]; then
+  swift "${ROOT_DIR}/Scripts/prepare-app-icon.swift" "${ICON_SOURCE}" "${ICON_SQUARE}"
   rm -rf "${ICONSET}"
   mkdir -p "${ICONSET}"
   for size in 16 32 128 256 512; do
-    sips -z "${size}" "${size}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
+    sips -z "${size}" "${size}" "${ICON_SQUARE}" --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    sips -z "${double}" "${double}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
+    sips -z "${double}" "${double}" "${ICON_SQUARE}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
   done
   iconutil -c icns "${ICONSET}" -o "${APP_DIR}/Contents/Resources/AppIcon.icns"
-  rm -rf "${ICONSET}"
+  cp "${APP_DIR}/Contents/Resources/AppIcon.icns" "${ROOT_DIR}/Packaging/AppIcon.icns"
+  cp "${APP_DIR}/Contents/Resources/AppIcon.icns" "${ROOT_DIR}/Sources/NivloApp/Resources/AppIcon.icns"
+  rm -rf "${ICONSET}" "${ICON_SQUARE}"
 fi
 
 cat > "${APP_DIR}/Contents/Info.plist" <<EOF
@@ -80,18 +85,44 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 EOF
 
 STAGING_DIR="${DIST_DIR}/dmg-staging"
+BACKGROUND_DIR="${STAGING_DIR}/.background"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}"
+mkdir -p "${BACKGROUND_DIR}"
+swift "${ROOT_DIR}/Scripts/generate-dmg-background.swift" "${BACKGROUND_DIR}/background.png"
 cp -R "${APP_DIR}" "${STAGING_DIR}/"
 ln -s /Applications "${STAGING_DIR}/Applications"
 
+DMG_SIZE_MB=$(( $(du -sm "${STAGING_DIR}" | awk '{print $1}') + 40 ))
 hdiutil create \
   -volname "${APP_NAME}" \
   -srcfolder "${STAGING_DIR}" \
   -ov \
-  -format UDZO \
-  "${DMG_PATH}" >/dev/null
+  -format UDRW \
+  -size "${DMG_SIZE_MB}m" \
+  "${DMG_RW_PATH}" >/dev/null
 
+MOUNT_OUTPUT="$(hdiutil attach -readwrite -noverify "${DMG_RW_PATH}")"
+VOLUME_PATH="$(echo "${MOUNT_OUTPUT}" | awk '/\/Volumes\// {print $3; exit}')"
+if [[ -z "${VOLUME_PATH}" ]]; then
+  echo "Failed to mount temporary DMG" >&2
+  exit 1
+fi
+
+cleanup_dmg_mount() {
+  if [[ -n "${VOLUME_PATH:-}" && -d "${VOLUME_PATH}" ]]; then
+    hdiutil detach "${VOLUME_PATH}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_dmg_mount EXIT
+
+osascript "${ROOT_DIR}/Scripts/configure-dmg.applescript" "${APP_NAME}" "${APP_NAME}"
+
+hdiutil detach "${VOLUME_PATH}" >/dev/null
+trap - EXIT
+VOLUME_PATH=""
+
+hdiutil convert "${DMG_RW_PATH}" -format UDZO -imagekey zlib-level=9 -o "${DMG_PATH}" >/dev/null
+rm -f "${DMG_RW_PATH}"
 rm -rf "${STAGING_DIR}"
 
 echo "Created ${APP_DIR}"

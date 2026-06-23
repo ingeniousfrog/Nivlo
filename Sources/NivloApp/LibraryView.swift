@@ -174,7 +174,35 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var histogram: String { text("Histogram", "直方图") }
   var shadowClipping: String { text("Shadow clipping", "阴影溢出") }
   var highlightClipping: String { text("Highlight clipping", "高光溢出") }
-  var sourceHistogram: String { text("Source histogram", "源图直方图") }
+  var inspectorFileSection: String { text("File", "文件") }
+  var inspectorImageSection: String { text("Image", "图像") }
+  var inspectorCameraSection: String { text("Capture", "拍摄") }
+  var inspectorMetadataSection: String { text("Index", "索引") }
+  var mediaType: String { text("Media type", "媒体类型") }
+  var mediaTypeImage: String { text("Image", "图片") }
+  var mediaTypeVideo: String { text("Video", "视频") }
+  var mediaTypeUnsupported: String { text("Unsupported", "不支持") }
+  var created: String { text("Created", "创建时间") }
+  var modified: String { text("Modified", "修改时间") }
+  var captured: String { text("Captured", "拍摄时间") }
+  var camera: String { text("Camera", "相机") }
+  var lens: String { text("Lens", "镜头") }
+  var exposure: String { text("Exposure", "曝光") }
+  var megapixels: String { text("Megapixels", "像素量") }
+  var aspectRatio: String { text("Aspect ratio", "宽高比") }
+  var dominantColors: String { text("Dominant colors", "主色") }
+  var keywords: String { text("Keywords", "关键词") }
+  var inspectorVideoSection: String { text("Video", "视频") }
+  var duration: String { text("Duration", "时长") }
+  var frameRate: String { text("Frame rate", "帧率") }
+  var audioTrack: String { text("Audio", "音频") }
+  var audioPresent: String { text("Present", "有") }
+  var audioAbsent: String { text("None", "无") }
+  var videoCodec: String { text("Video codec", "视频编码") }
+  var audioCodec: String { text("Audio codec", "音频编码") }
+  var videoMetadataUnavailable: String {
+    text("Video details are unavailable.", "无法读取视频详情。")
+  }
   var fullRenderPreviewHint: String {
     text(
       "Advanced edits need preview.",
@@ -1334,8 +1362,6 @@ private struct AssetPreviewPanel: View {
   @State private var isEditorPresented = false
   @State private var isRenamePresented = false
   @State private var isHideConfirmationPresented = false
-  @State private var copyFeedback: CopyFeedback?
-  @State private var copyFeedbackTask: Task<Void, Never>?
   @State private var sidebarTab: AssetPreviewSidebarTab = .inspector
   @State private var lineageGraph = AssetLineageGraph(
     assetID: AssetID(volumeIdentifier: "", fileIdentifier: ""), records: [])
@@ -1344,18 +1370,14 @@ private struct AssetPreviewPanel: View {
     renamedAsset ?? asset
   }
 
-  private var details: AssetPreviewDetails {
-    AssetPreviewDetails(asset: displayedAsset)
-  }
-
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
-          Text(details.title)
+          Text(displayedAsset.filename)
             .font(.title2.weight(.semibold))
             .lineLimit(1)
-          Text(details.path)
+          Text(displayedAsset.url.path)
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -1423,12 +1445,11 @@ private struct AssetPreviewPanel: View {
           ScrollView {
             switch sidebarTab {
             case .inspector:
-              VStack(alignment: .leading, spacing: 10) {
-                detailRow(language.format, details.format)
-                detailRow(language.dimensions, details.dimensions)
-                detailRow(language.size, details.fileSize)
-                pathRow(details.path)
-              }
+              AssetInspectorPanel(
+                asset: displayedAsset,
+                enrichment: enrichment,
+                language: language
+              )
             case .lineage:
               LineageView(graph: lineageGraph, language: language)
                 .frame(maxWidth: .infinity, minHeight: 320)
@@ -1493,69 +1514,6 @@ private struct AssetPreviewPanel: View {
     } message: {
       Text(language.hideAssetMessage(displayedAsset.filename))
     }
-    .onDisappear {
-      copyFeedbackTask?.cancel()
-    }
-  }
-
-  private func detailRow(_ label: String, _ value: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(label)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-      Text(value)
-        .font(.callout)
-        .textSelection(.enabled)
-        .lineLimit(label == "Path" ? 3 : 1)
-    }
-  }
-
-  private func pathRow(_ value: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(language.path)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-      HStack(alignment: .top, spacing: 6) {
-        Text(value)
-          .font(.callout)
-          .textSelection(.enabled)
-          .lineLimit(4)
-        Button {
-          copyPath()
-        } label: {
-          if let copyFeedback {
-            Image(
-              systemName: copyFeedback == .success
-                ? "checkmark"
-                : "exclamationmark.triangle"
-            )
-            .foregroundStyle(copyFeedback == .success ? Color.green : Color.red)
-          } else {
-            Image(systemName: "doc.on.doc")
-          }
-        }
-        .buttonStyle(.borderless)
-        .help(language.copyPath)
-      }
-    }
-  }
-
-  private func copyPath() {
-    copyFeedbackTask?.cancel()
-    copyFeedback = AssetClipboard.copyPath(asset.url) ? .success : .failure
-    copyFeedbackTask = Task {
-      do {
-        try await Task.sleep(for: .seconds(1.5))
-      } catch {
-        return
-      }
-      copyFeedback = nil
-    }
-  }
-
-  private enum CopyFeedback: Equatable {
-    case success
-    case failure
   }
 }
 
@@ -1702,7 +1660,7 @@ private struct AssetPreviewToolbar: View {
   }
 }
 
-private enum AssetClipboard {
+enum AssetClipboard {
   @discardableResult
   static func copyPath(_ url: URL) -> Bool {
     NSPasteboard.general.clearContents()

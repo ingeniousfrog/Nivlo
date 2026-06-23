@@ -64,17 +64,20 @@ public struct FFprobeService: Sendable {
     let duration = Double(format?["duration"] as? String ?? "") ?? 0
     let streams = root["streams"] as? [[String: Any]] ?? []
     let videoStream = streams.first { ($0["codec_type"] as? String) == "video" }
-    let hasAudio = streams.contains { ($0["codec_type"] as? String) == "audio" }
+    let audioStream = streams.first { ($0["codec_type"] as? String) == "audio" }
+    let hasAudio = audioStream != nil
     let width = videoStream?["width"] as? Int ?? 0
     let height = videoStream?["height"] as? Int ?? 0
-  let frameRate = parseFrameRate(videoStream?["r_frame_rate"] as? String)
+    let frameRate = parseFrameRate(videoStream?["r_frame_rate"] as? String)
 
     return VideoProbeInfo(
       durationSeconds: duration,
       width: width,
       height: height,
       frameRate: frameRate,
-      hasAudio: hasAudio
+      hasAudio: hasAudio,
+      videoCodec: videoStream?["codec_name"] as? String,
+      audioCodec: audioStream?["codec_name"] as? String
     )
   }
 

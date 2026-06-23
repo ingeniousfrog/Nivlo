@@ -35,7 +35,6 @@ struct AssetEditorView: View {
   @State private var isExporting = false
   @State private var isExportOptionsPresented = false
   @State private var isCropEditing = true
-  @State private var histogram: ImageHistogram?
   @State private var customAdjustmentPresets: [ImageAdjustmentPreset] = []
   @State private var selectedAdjustmentPresetID = ""
   @State private var adjustmentPresetName = ""
@@ -53,7 +52,6 @@ struct AssetEditorView: View {
 
   private let pipeline = ImageEditPipeline()
   private let previewRenderer = ImageEditPreviewRenderer()
-  private let histogramAnalyzer = ImageHistogramAnalyzer()
   private let sessionStore = EditSessionStoreProvider.shared
   private let inspectorWidth: CGFloat = 360
 
@@ -422,7 +420,6 @@ struct AssetEditorView: View {
       ImageAdjustmentInspector(
         language: language,
         settings: snapshotBinding(\.adjustments),
-        histogram: histogram,
         requiresFullRenderPreview: editSnapshot.adjustments.requiresFullRenderPreview,
         isRenderingPreview: isRenderingPreview,
         isRenderedPreviewPresented: isRenderedPreviewPresented,
@@ -640,9 +637,6 @@ struct AssetEditorView: View {
       customAdjustmentPresets =
         (try? await sessionStore.adjustmentPresets()) ?? []
     }
-    histogram = try? await Task.detached(priority: .utility) {
-      try histogramAnalyzer.analyze(url: asset.url)
-    }.value
   }
 
   private func scheduleSessionSave(_ snapshot: ImageEditSnapshot) {
