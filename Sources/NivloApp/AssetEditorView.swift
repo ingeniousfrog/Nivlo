@@ -5,33 +5,6 @@ import NivloPersistence
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum ImageEditorTool: String, CaseIterable, Identifiable {
-  case geometry
-  case adjust
-  case annotate
-  case mask
-
-  var id: String { rawValue }
-
-  func title(language: NivloLanguage) -> String {
-    switch self {
-    case .geometry: language.tabGeometry
-    case .adjust: language.tabAdjust
-    case .annotate: language.tabAnnotate
-    case .mask: language.tabMask
-    }
-  }
-
-  var icon: String {
-    switch self {
-    case .geometry: "crop.rotate"
-    case .adjust: "slider.horizontal.3"
-    case .annotate: "pencil.and.outline"
-    case .mask: "paintbrush.pointed"
-    }
-  }
-}
-
 extension ImageEditSnapshot {
   fileprivate static let defaultInitial = ImageEditSnapshot(cropRect: .full)
 }
@@ -180,8 +153,17 @@ struct AssetEditorView: View {
           renderPixelPreview()
         }
       } label: {
-        Image(systemName: "circle.lefthalf.filled")
+        if isRenderingPreview {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Label(
+            isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview,
+            systemImage: isRenderedPreviewPresented ? "xmark.circle" : "sparkles.rectangle.stack"
+          )
+        }
       }
+      .buttonStyle(.bordered)
       .disabled(isRenderingPreview || comparisonShowsOriginal)
       .help(
         isRenderedPreviewPresented
@@ -382,88 +364,44 @@ struct AssetEditorView: View {
   }
 
   private var inspector: some View {
-    VStack(spacing: 0) {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          toolSelector
-          Divider()
-          Label(
-            selectedTool.title(language: language),
-            systemImage: selectedTool.icon
-          )
-          .font(.title3.weight(.semibold))
-
-          switch selectedTool {
-          case .geometry:
-            geometryControls
-          case .adjust:
-            adjustControls
-          case .annotate:
-            annotateControls
-          case .mask:
-            maskControls
-          }
-          Divider()
-          EditorLayerControls(
-            language: language,
-            layers: snapshotBinding(\.layers)
-          )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-      }
-      Divider()
-      revertButton
-        .padding(20)
-    }
-    .background(Color(nsColor: .windowBackgroundColor))
-  }
-
-  private var toolSelector: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text(language.editorTools)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .textCase(.uppercase)
-
-      LazyVGrid(
-        columns: [
-          GridItem(.flexible(), spacing: 6),
-          GridItem(.flexible(), spacing: 6),
-        ],
-        spacing: 6
-      ) {
-        ForEach(ImageEditorTool.allCases) { tool in
-          Button {
-            selectedTool = tool
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
+        ImageEditorToolSelector(
+          language: language,
+          selection: $selectedTool,
+          onSelect: { tool in
             if tool == .geometry {
               isCropEditing = true
             }
-          } label: {
-            VStack(spacing: 4) {
-              Image(systemName: tool.icon)
-              Text(tool.title(language: language))
-                .font(.caption2)
-            }
-            .frame(maxWidth: .infinity, minHeight: 42)
-            .contentShape(Rectangle())
           }
-          .buttonStyle(.bordered)
-          .tint(selectedTool == tool ? Color.accentColor : .primary)
-        }
-      }
-    }
-  }
+        )
+        Divider()
+        Label(
+          selectedTool.title(language: language),
+          systemImage: selectedTool.icon
+        )
+        .font(.title3.weight(.semibold))
 
-  private var revertButton: some View {
-    HStack {
-      Button(language.revertChanges) {
-        revertEdits()
+        switch selectedTool {
+        case .geometry:
+          geometryControls
+        case .adjust:
+          adjustControls
+        case .annotate:
+          annotateControls
+        case .mask:
+          maskControls
+        }
+        Divider()
+        EditorLayerControls(
+          language: language,
+          layers: snapshotBinding(\.layers)
+        )
       }
-      .buttonStyle(.bordered)
-      .disabled(!editSession.hasChanges)
-      .frame(maxWidth: .infinity)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(20)
     }
+    .background(Color(nsColor: .windowBackgroundColor))
   }
 
   private var statusBar: some View {
@@ -525,6 +463,7 @@ struct AssetEditorView: View {
         language: language,
         settings: snapshotBinding(\.adjustments),
         histogram: histogram,
+        requiresFullRenderPreview: editSnapshot.adjustments.requiresFullRenderPreview,
         presets: ImageAdjustmentPreset.builtIn + customAdjustmentPresets,
         selectedPresetID: $selectedAdjustmentPresetID,
         presetName: $adjustmentPresetName,
@@ -568,15 +507,6 @@ struct AssetEditorView: View {
 
   private func updateSnapshot(_ mutate: (inout ImageEditSnapshot) -> Void) {
     editSession.update(mutate)
-  }
-
-  private func revertEdits() {
-    editSession.revert()
-    currentMaskStroke = nil
-    selectedAnnotationID = nil
-    exportMessage = nil
-    isCropEditing = true
-    selectedAdjustmentPresetID = ""
   }
 
   private func undo() {

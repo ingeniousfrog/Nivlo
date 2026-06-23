@@ -84,6 +84,24 @@ struct AdvancedImageEditingTests {
     #expect(decoded == snapshot)
   }
 
+  @Test("adjustments report when the full render engine is needed")
+  func fullRenderRequirement() {
+    #expect(!ImageAdjustmentSettings.neutral.requiresFullRenderPreview)
+    #expect(!ImageAdjustmentSettings(exposure: 0.4, contrast: 0.1).requiresFullRenderPreview)
+    #expect(ImageAdjustmentSettings(tint: 0.2).requiresFullRenderPreview)
+    #expect(
+      ImageAdjustmentSettings(
+        curves: [
+          .rgb: ToneCurve(points: [
+            ToneCurvePoint(x: 0, y: 0),
+            ToneCurvePoint(x: 0.5, y: 0.7),
+            ToneCurvePoint(x: 1, y: 1),
+          ])
+        ]
+      ).requiresFullRenderPreview
+    )
+  }
+
   @Test("decoded tone controls normalize untrusted values")
   func decodedToneControlsAreNormalized() throws {
     let levels = try JSONDecoder().decode(

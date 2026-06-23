@@ -11,6 +11,10 @@ struct EditorLayerControls: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .textCase(.uppercase)
+      Text(language.layerControlsHint)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
 
       ForEach(Array(layers.enumerated()), id: \.element.id) { index, layer in
         HStack(spacing: 8) {
@@ -25,18 +29,27 @@ struct EditorLayerControls: View {
               systemName: layer.isVisible ? "eye.fill" : "eye.slash"
             )
           }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .help(layer.isVisible ? language.hideLayer : language.showLayer)
           Button {
             moveLayer(at: index, offset: -1)
           } label: {
             Image(systemName: "chevron.up")
           }
           .disabled(index <= 1)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .help(language.moveLayerUp)
           Button {
             moveLayer(at: index, offset: 1)
           } label: {
             Image(systemName: "chevron.down")
           }
           .disabled(index == 0 || index >= layers.count - 1)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .help(language.moveLayerDown)
         }
       }
     }

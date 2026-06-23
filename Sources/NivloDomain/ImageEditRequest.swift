@@ -111,6 +111,23 @@ public struct ImageAdjustmentSettings: Equatable, Sendable, Codable {
 
   public static let neutral = ImageAdjustmentSettings()
 
+  public var requiresFullRenderPreview: Bool {
+    let fullRenderScalars = [
+      tint,
+      highlights,
+      shadows,
+      clarity,
+      vibrance,
+      sharpness,
+      noiseReduction,
+      vignette,
+    ]
+    return fullRenderScalars.contains { abs($0) > 0.000_001 }
+      || levels.values.contains { $0 != .neutral }
+      || curves.values.contains { $0 != .identity }
+      || colorBands.values.contains { $0 != .neutral }
+  }
+
   public var blackPoint: Double {
     get { levels[.rgb]?.blackPoint ?? 0 }
     set {

@@ -6,6 +6,7 @@ struct ImageAdjustmentInspector: View {
   let language: NivloLanguage
   @Binding var settings: ImageAdjustmentSettings
   let histogram: ImageHistogram?
+  let requiresFullRenderPreview: Bool
   let presets: [ImageAdjustmentPreset]
   @Binding var selectedPresetID: String
   @Binding var presetName: String
@@ -14,10 +15,14 @@ struct ImageAdjustmentInspector: View {
   @State private var levelChannel: ImageColorChannel = .rgb
   @State private var curveChannel: ImageColorChannel = .rgb
   @State private var colorBand: HSLColorBand = .red
+  @State private var isPresetExpanded = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       if let histogram {
+        Text(language.sourceHistogram)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
         HistogramView(histogram: histogram)
         HStack {
           clippingLabel(
@@ -29,9 +34,25 @@ struct ImageAdjustmentInspector: View {
             count: histogram.highlightClippingCount
           )
         }
+        Text(language.sourceHistogramHint)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
-      GroupBox(language.adjustmentPreset) {
+      if requiresFullRenderPreview {
+        Label(language.fullRenderPreviewHint, systemImage: "sparkles.rectangle.stack")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(8)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(
+            Color.accentColor.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 8)
+          )
+      }
+
+      DisclosureGroup(language.adjustmentPreset, isExpanded: $isPresetExpanded) {
         VStack(alignment: .leading, spacing: 8) {
           Picker(language.adjustmentPreset, selection: $selectedPresetID) {
             Text(language.custom).tag("")
@@ -52,6 +73,8 @@ struct ImageAdjustmentInspector: View {
           }
         }
       }
+      .font(.caption)
+      .padding(.vertical, 2)
 
       GroupBox(language.basicAdjustments) {
         VStack(alignment: .leading, spacing: 10) {
@@ -218,7 +241,7 @@ private struct HistogramView: View {
         size: size
       )
     }
-    .frame(height: 110)
+    .frame(height: 78)
     .padding(8)
     .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     .accessibilityLabel("RGB and luminance histogram")

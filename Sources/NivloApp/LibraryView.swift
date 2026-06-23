@@ -163,6 +163,19 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var histogram: String { text("Histogram", "直方图") }
   var shadowClipping: String { text("Shadow clipping", "阴影溢出") }
   var highlightClipping: String { text("Highlight clipping", "高光溢出") }
+  var sourceHistogram: String { text("Source histogram", "源图直方图") }
+  var sourceHistogramHint: String {
+    text(
+      "The histogram describes the original pixels; use Render Preview to inspect the full adjusted result.",
+      "这里显示原始像素分布；请用「渲染预览」查看完整调整后的结果。"
+    )
+  }
+  var fullRenderPreviewHint: String {
+    text(
+      "This adjustment is applied by the full render engine. Use Render Preview to see the exact canvas result.",
+      "此调整由完整渲染引擎应用；请用「渲染预览」查看精确画布效果。"
+    )
+  }
   var basicAdjustments: String { text("Basic", "基础调整") }
   var levels: String { text("Levels", "色阶") }
   var curves: String { text("Curves", "曲线") }
@@ -185,10 +198,20 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var fit: String { text("Fit", "适合窗口") }
   var actualSize: String { text("100%", "100%") }
   var layers: String { text("Layers", "图层") }
+  var layerControlsHint: String {
+    text(
+      "Show, hide, or reorder edit layers. The background layer stays locked.",
+      "显示、隐藏或调整编辑层顺序；背景层会保持锁定。"
+    )
+  }
+  var showLayer: String { text("Show layer", "显示图层") }
+  var hideLayer: String { text("Hide layer", "隐藏图层") }
+  var moveLayerUp: String { text("Move layer up", "上移图层") }
+  var moveLayerDown: String { text("Move layer down", "下移图层") }
   var layerLocalAdjustments: String { text("Local adjustments", "局部调整层") }
   var addLocalAdjustment: String { text("Use mask for local adjustment", "将蒙版用于局部调整") }
   var localAdjustment: String { text("Local adjustment", "局部调整") }
-  var renderedPreview: String { text("Rendered Preview", "渲染预览") }
+  var renderedPreview: String { text("Render Preview", "渲染预览") }
   var addTextAnnotation: String { text("Add text", "添加文字") }
   var addRectangleAnnotation: String { text("Add rectangle", "添加矩形") }
   var addArrowAnnotation: String { text("Add arrow", "添加箭头") }
@@ -264,8 +287,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorGeometryHint: String {
     text(
-      "Drag the frame to move the crop, or drag any handle to resize it. Apply Crop confirms the crop; Reset restores the default geometry. Revert restores the image to its opening state.",
-      "拖动框体可移动裁切区域，拖动任一手柄可调整大小。应用裁切会确认裁切结果；重置会恢复默认几何变换。还原会恢复到打开编辑器时的状态。"
+      "Drag the frame to move the crop, or drag any handle to resize it. Apply Crop confirms the crop; Reset restores the default geometry.",
+      "拖动框体可移动裁切区域，拖动任一手柄可调整大小。应用裁切会确认裁切结果；重置会恢复默认几何变换。"
     )
   }
   var applyCrop: String { text("Apply Crop", "应用裁切") }
@@ -278,8 +301,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorAdjustHint: String {
     text(
-      "Changes appear on the canvas as you move each slider. Revert restores the opening state.",
-      "移动滑块时效果会立即显示在画布上。还原会恢复到打开时的状态。"
+      "Exposure, contrast, saturation, and warmth preview directly on the canvas. Use Render Preview for the full adjustment engine.",
+      "曝光、对比度、饱和度和色温会直接在画布上预览；完整调整效果请使用「渲染预览」。"
     )
   }
   var maskBrushHint: String {
@@ -290,7 +313,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var maskBrushSize: String { text("Brush size", "画笔大小") }
   var previewChanges: String { text("Preview", "预览") }
-  var revertChanges: String { text("Revert", "还原") }
   var editorTools: String { text("Tools", "工具") }
   var chooseExportLocation: String { text("Choose Location…", "选择保存位置…") }
   var openSettings: String { text("Settings", "设置") }
