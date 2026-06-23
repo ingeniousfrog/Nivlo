@@ -87,22 +87,29 @@ struct NivloBenchmark {
   }
 
   private static func benchmarkAssets(count: Int) -> [ImageAsset] {
-    (0..<count).map { index in
-      ImageAsset(
-        id: AssetID(
-          volumeIdentifier: "benchmark",
-          fileIdentifier: "\(index)"
-        ),
-        url: URL(filePath: "/tmp/nivlo-benchmark-assets/\(index).png"),
-        filename: "\(index).png",
-        contentType: UTType.png.identifier,
-        fileSize: Int64(100_000 + index),
-        createdAt: nil,
-        modifiedAt: Date(timeIntervalSince1970: Double(index)),
-        pixelWidth: 1_000 + index % 1_000,
-        pixelHeight: 800 + index % 500
-      )
+    var assets: [ImageAsset] = []
+    assets.reserveCapacity(count)
+    for index in 0..<count {
+      assets.append(makeBenchmarkAsset(index: index))
     }
+    return assets
+  }
+
+  private static func makeBenchmarkAsset(index: Int) -> ImageAsset {
+    ImageAsset(
+      id: AssetID(
+        volumeIdentifier: "benchmark",
+        fileIdentifier: "\(index)"
+      ),
+      url: URL(filePath: "/tmp/nivlo-benchmark-assets/\(index).png"),
+      filename: "\(index).png",
+      contentType: UTType.png.identifier,
+      fileSize: Int64(100_000 + index),
+      createdAt: nil,
+      modifiedAt: Date(timeIntervalSince1970: Double(index)),
+      pixelWidth: 1_000 + index % 1_000,
+      pixelHeight: 800 + index % 500
+    )
   }
 
   private static func seedAssets(

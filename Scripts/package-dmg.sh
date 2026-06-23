@@ -18,7 +18,7 @@ fi
 
 echo "Building ${APP_NAME} (${APP_VERSION}) in ${BUILD_CONFIG} mode..."
 cd "${ROOT_DIR}"
-swift build -c "${BUILD_CONFIG}"
+swift build -c "${BUILD_CONFIG}" --product Nivlo
 
 EXECUTABLE="${ROOT_DIR}/.build/${BUILD_CONFIG}/${APP_NAME}"
 if [[ ! -f "${EXECUTABLE}" ]]; then
