@@ -15,7 +15,7 @@ Early-access macOS build of Nivlo, a local-first visual asset workbench for inde
 - Search, smart views, duplicate and similarity detection
 - Image and video editors (beta)
 - Batch export and derivative lineage tracking
-- App icon for the installed `.app`
+- App icon for the installed app bundle
 - Release installs use their own library at \`~/Library/Application Support/dev.nivlo/\`
 - Folder menu action: **Re-authorize Folder** when rescan needs fresh macOS access
 
