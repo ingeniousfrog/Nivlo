@@ -173,6 +173,22 @@ flowchart TB
 - Xcode 16 或更高版本
 - Swift 6
 
+### 下载安装
+
+macOS 预编译包发布在 [GitHub Releases](https://github.com/ingeniousfrog/Nivlo/releases)，文件名为 `Nivlo.dmg`。
+
+1. 从 Releases 下载最新的 `.dmg`。
+2. 打开后将 **Nivlo** 拖入 **Applications**。
+3. 首次启动时，macOS 可能提示应用来自未识别开发者。可以任选其一：
+   - 在应用程序文件夹中 **右键 Nivlo → 打开**，并在弹窗中确认一次。
+   - 或在终端中清除下载隔离标记：
+
+```bash
+xattr -cr /Applications/Nivlo.app
+```
+
+当前 DMG 为未签名早期测试构建，尚未进行 Apple 代码签名与公证。如需开发调试或跟踪最新提交，请使用下方源码运行方式。
+
 ### 从源码运行
 
 在仓库根目录执行：
@@ -200,6 +216,52 @@ swift test
 ```
 
 测试使用 Swift Testing（`@Test`），覆盖 domain、indexing、imaging 与 persistence 模块。
+
+### 性能基准
+
+在仓库根目录运行 1 万 / 5 万 / 10 万条合成素材基准测试：
+
+```bash
+swift run NivloBenchmark
+```
+
+测试项包括：
+
+- 事务化夹具写入后的 SQLite 库启动耗时。
+- 滚动场景使用的瀑布流布局计算。
+- 有界并发的富化调度。
+- 完整的合成目录重扫。
+
+2026 年 6 月 23 日基线：
+
+| 素材数 | 启动 | 布局 | 富化 | 重扫 |
+|-------:|-----:|-----:|-----:|-----:|
+| 10,000 | 12.15 ms | 1.88 ms | 44.83 ms | 431.40 ms |
+| 50,000 | 63.89 ms | 11.96 ms | 232.24 ms | 2,085.12 ms |
+| 100,000 | 117.02 ms | 21.45 ms | 469.97 ms | 4,203.56 ms |
+
+以上数据仅作本机回归对比基线，不代表所有硬件上的绝对性能目标。
+
+### UI 冒烟流程
+
+用于真实编辑器 UI 冒烟测试：
+
+```bash
+swift run Nivlo --ui-smoke
+swift run Nivlo --ui-smoke --ui-smoke-video
+```
+
+冒烟模式会创建本地 PNG 与 H.264 MOV 夹具，并打开图像或视频编辑器，不会触碰用户素材库。
+
+### 本地打包 DMG
+
+本地构建 release 版 `.app` 与 `.dmg`：
+
+```bash
+VERSION=0.1.0 Scripts/package-dmg.sh
+```
+
+产物输出到 `dist/Nivlo.app` 与 `dist/Nivlo.dmg`。推送 `v*` 格式的 git tag 后，GitHub Actions 会执行相同打包流程并将 DMG 上传到 Releases。
 
 ### 外部工具
 
