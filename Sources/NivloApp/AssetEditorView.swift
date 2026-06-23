@@ -362,11 +362,6 @@ struct AssetEditorView: View {
         case .mask:
           maskControls
         }
-        Divider()
-        EditorLayerControls(
-          language: language,
-          layers: snapshotBinding(\.layers)
-        )
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(20)

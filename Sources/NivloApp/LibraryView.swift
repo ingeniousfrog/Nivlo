@@ -23,6 +23,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var addFolder: String { text("Add Folder", "添加文件夹") }
   var allImages: String { text("All Assets", "全部素材") }
   var cancel: String { text("Cancel", "取消") }
+  var confirm: String { text("Confirm", "确认") }
   var hideAsset: String { text("Hide", "隐藏") }
   var hideHelp: String {
     text("Hide from Nivlo without deleting the original file", "从 Nivlo 隐藏，但不删除原文件")
@@ -199,18 +200,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var after: String { text("After", "调整后") }
   var fit: String { text("Fit", "适合窗口") }
   var actualSize: String { text("100%", "100%") }
-  var layers: String { text("Layers", "图层") }
-  var layerControlsHint: String {
-    text(
-      "Show, hide, or reorder edit layers. The background layer stays locked.",
-      "显示、隐藏或调整编辑层顺序；背景层会保持锁定。"
-    )
-  }
-  var showLayer: String { text("Show layer", "显示图层") }
-  var hideLayer: String { text("Hide layer", "隐藏图层") }
-  var moveLayerUp: String { text("Move layer up", "上移图层") }
-  var moveLayerDown: String { text("Move layer down", "下移图层") }
-  var layerLocalAdjustments: String { text("Local adjustments", "局部调整层") }
   var addLocalAdjustment: String { text("Use mask for local adjustment", "将蒙版用于局部调整") }
   var localAdjustment: String { text("Local adjustment", "局部调整") }
   var renderedPreview: String { text("Render Preview", "渲染预览") }
@@ -218,7 +207,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var addRectangleAnnotation: String { text("Add rectangle", "添加矩形") }
   var addArrowAnnotation: String { text("Add arrow", "添加箭头") }
   var annotationPlaceholder: String { text("Text", "文字") }
-  var annotationText: String { text("Text", "文字内容") }
+  var annotationText: String { text("Text content", "文字内容") }
   var annotationFont: String { text("Font", "字体") }
   var annotationFontSize: String { text("Size", "字号") }
   var annotationBold: String { text("Bold", "粗体") }
@@ -238,10 +227,6 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var maskPaint: String { text("Brush", "画笔") }
   var maskErase: String { text("Eraser", "橡皮擦") }
   var maskStrokeCount: String { text("Mask strokes", "蒙版笔触数") }
-  var layerBackground: String { text("Background layer", "背景层") }
-  var layerAdjustments: String { text("Adjustments layer", "调整层") }
-  var layerAnnotations: String { text("Annotations layer", "标注层") }
-  var layerMask: String { text("Mask layer", "蒙版层") }
   var exportFormat: String { text("Format", "格式") }
   var exportPreset: String { text("Preset", "预设") }
   var exportQuality: String { text("Quality", "质量") }

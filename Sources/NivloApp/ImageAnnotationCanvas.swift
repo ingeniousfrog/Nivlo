@@ -1,3 +1,4 @@
+import AppKit
 import NivloDomain
 import SwiftUI
 
@@ -408,16 +409,83 @@ private struct ArrowLineShape: Shape {
 
 struct RGBAColorPicker: View {
   let title: String
-  @Binding var color: RGBAColor
+  let cancelTitle: String
+  let confirmTitle: String
+
+  @Binding private var color: RGBAColor
+  @State private var draftColor: Color
+  @State private var isPickerPresented = false
+
+  init(
+    title: String,
+    color: Binding<RGBAColor>,
+    cancelTitle: String,
+    confirmTitle: String
+  ) {
+    self.title = title
+    self.cancelTitle = cancelTitle
+    self.confirmTitle = confirmTitle
+    self._color = color
+    self._draftColor = State(initialValue: Color(color.wrappedValue))
+  }
 
   var body: some View {
-    ColorPicker(
-      title,
-      selection: Binding(
-        get: { Color(color) },
-        set: { color = $0.rgbaColor }
-      ),
-      supportsOpacity: true
-    )
+    LabeledContent(title) {
+      Button {
+        draftColor = Color(color)
+        isPickerPresented = true
+      } label: {
+        colorSwatch
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(title)
+      .popover(isPresented: $isPickerPresented, arrowEdge: .trailing) {
+        VStack(alignment: .leading, spacing: 14) {
+          Text(title)
+            .font(.headline)
+
+          ColorPicker(
+            title,
+            selection: $draftColor,
+            supportsOpacity: true
+          )
+          .labelsHidden()
+
+          HStack {
+            Button(cancelTitle) {
+              closePicker()
+            }
+            Spacer()
+            Button(confirmTitle) {
+              color = draftColor.rgbaColor
+              closePicker()
+            }
+            .keyboardShortcut(.defaultAction)
+          }
+        }
+        .padding(14)
+        .frame(width: 220)
+        .onDisappear {
+          NSColorPanel.shared.close()
+        }
+      }
+    }
+  }
+
+  private var colorSwatch: some View {
+    ZStack {
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(.white)
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color(color))
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(.secondary.opacity(0.25), lineWidth: 1)
+    }
+    .frame(width: 64, height: 26)
+  }
+
+  private func closePicker() {
+    isPickerPresented = false
+    NSColorPanel.shared.close()
   }
 }

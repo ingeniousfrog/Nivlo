@@ -141,7 +141,10 @@ struct ImageAnnotationInspector: View {
   ) -> some View {
     switch annotation.wrappedValue.kind {
     case .text:
-      TextField(language.annotationText, text: annotation.text)
+      LabeledContent(language.annotationText) {
+        TextField(language.annotationPlaceholder, text: annotation.text)
+          .textFieldStyle(.roundedBorder)
+      }
       Picker(language.annotationFont, selection: annotation.textStyle.fontName) {
         ForEach(
           ["Helvetica", "Arial", "Avenir Next", "Georgia", "Menlo"],
@@ -160,16 +163,22 @@ struct ImageAnnotationInspector: View {
       Toggle(language.annotationItalic, isOn: annotation.textStyle.isItalic)
       RGBAColorPicker(
         title: language.annotationColor,
-        color: annotation.textStyle.color
+        color: annotation.textStyle.color,
+        cancelTitle: language.cancel,
+        confirmTitle: language.confirm
       )
     case .rectangle:
       RGBAColorPicker(
         title: language.annotationStrokeColor,
-        color: annotation.rectangleStyle.strokeColor
+        color: annotation.rectangleStyle.strokeColor,
+        cancelTitle: language.cancel,
+        confirmTitle: language.confirm
       )
       RGBAColorPicker(
         title: language.annotationFillColor,
-        color: annotation.rectangleStyle.fillColor
+        color: annotation.rectangleStyle.fillColor,
+        cancelTitle: language.cancel,
+        confirmTitle: language.confirm
       )
       lineWidthSlider(annotation.rectangleStyle.lineWidth)
       Picker(
@@ -183,7 +192,9 @@ struct ImageAnnotationInspector: View {
     case .arrow:
       RGBAColorPicker(
         title: language.annotationColor,
-        color: annotation.arrowStyle.color
+        color: annotation.arrowStyle.color,
+        cancelTitle: language.cancel,
+        confirmTitle: language.confirm
       )
       lineWidthSlider(annotation.arrowStyle.lineWidth)
       Picker(language.arrowDirection, selection: annotation.arrowStyle.direction) {
