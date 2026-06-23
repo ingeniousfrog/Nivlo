@@ -9,6 +9,8 @@ Nivlo helps you discover, index, browse, search, organize, process, edit, and tr
 Repository: [github.com/ingeniousfrog/Nivlo](https://github.com/ingeniousfrog/Nivlo)
 
 > Screenshots coming soon.
+>
+> Project status last verified against the repository on June 23, 2026.
 
 ---
 
@@ -17,6 +19,21 @@ Repository: [github.com/ingeniousfrog/Nivlo](https://github.com/ingeniousfrog/Ni
 Nivlo is built for people who keep visual assets scattered across Desktop, Downloads, project folders, and removable volumes. Instead of importing everything into a proprietary library, you explicitly authorize the folders you care about. Nivlo builds a rich local index on top of your existing file layout and keeps watching for changes.
 
 Spotlight can surface lightweight discovery candidates, but the full index is built only after you grant folder access. All derived data — thumbnails, hashes, OCR text, and exports — lives under Application Support and never alters your source files.
+
+### How Nivlo differs from Apple Photos
+
+Nivlo is not intended to replace the personal photo library and iCloud experience in Apple Photos. It is aimed at creators and developers who work with visual files that already live across project folders, Downloads, external drives, and other user-managed locations.
+
+| Area | Nivlo | Apple Photos |
+|------|-------|--------------|
+| Storage model | Indexes authorized folders in place; originals keep their existing paths | Imports or references items through a managed Photos library |
+| Primary workflow | Project assets, search, batch processing, derivative exports, and lineage | Personal memories, iPhone capture, albums, sharing, and cross-device sync |
+| Cloud model | Local-first; cloud AI is explicitly opt-in | Deep iCloud Photos and Apple ecosystem integration |
+| Search and organization | Filename, path, OCR, metadata, color, source, exact duplicates, and perceptual similarity | People and pets, places, dates, media types, albums, Smart Albums, memories, and semantic search |
+| Editing direction | File-oriented editing, export presets, annotations, masks, and planned multi-model generative editing | Mature photo adjustments, Live Photo/Portrait/Cinematic workflows, extensions, and Apple Intelligence features |
+| Provenance | Explicit processing history and derivative lineage | Non-destructive edits inside the Photos library |
+
+The strongest product position for Nivlo is therefore a **local visual asset workbench**, not a Photos clone: preserve folder ownership, make large mixed asset collections searchable, and connect conventional editing, batch delivery, and AI-generated variants in one traceable workflow.
 
 ---
 
@@ -66,22 +83,27 @@ Spotlight can surface lightweight discovery candidates, but the full index is bu
 - Copy file paths or Markdown image references, reveal files in Finder, and drag file URLs from the grid.
 - Track processing history and derivative lineage from source to export.
 
-### Image Editor *(Phase 2 — Early Access)*
+### Image Editor *(Phase 2 — Beta)*
 
-- Open indexed images in a lightweight editor canvas.
-- Crop and rotate, apply adjustments, add annotations, and paint masks.
-- Export optimized derivatives through Picx (WebP and related presets).
+- Open indexed images in a native editor canvas.
+- Crop, rotate, and flip; adjust exposure, contrast, saturation, and warmth.
+- Add editable text, rectangle, and arrow annotations; paint and erase masks.
+- Preview the composed result and export optimized derivatives through Picx.
+- Track the exported edit in the asset lineage.
 
-### Video Editor *(Phase 2 — Early Access)*
+### Video Editor *(Phase 2 — Beta)*
 
-- Trim, transform, and export indexed videos through FFmpeg.
+- Preview, trim, crop, scale, rotate, and change frame rate.
+- Export MP4, MOV, or WebM derivatives through FFmpeg.
 - Probe media with FFprobe; optionally export audio only.
 
-### AI Generation *(Phase 2 — Early Access, optional)*
+### AI Generation *(Integration foundation, not production-ready)*
 
 - Pluggable `GenerationAdapter` interface for text-to-image, image-to-image, inpainting, outpainting, background removal, super-resolution, and style variants.
-- **Currently implemented:** OpenAI Images (`text-to-image`, `image-to-image`) with a user-provided API key.
-- **Planned:** local model adapter (interface present, not yet configured).
+- The settings UI, Keychain storage, generation panel, result export, and lineage hooks are present.
+- The current direct OpenAI adapter is a prototype and does not yet represent the intended production integration.
+- **Next provider target:** the [Synclip.ai API Platform](https://synclip.ai/dev), used as one provider surface for multiple image-generation and image-editing models.
+- Image editing comes first; video-generation models are intentionally deferred until the image workflow, async jobs, error handling, and cost visibility are reliable.
 - API keys are stored in the macOS Keychain, not in the repository or index database.
 
 ---
@@ -205,22 +227,51 @@ All paths above are derivative. Deleting them does not remove or alter any origi
 
 ## Roadmap
 
-### Phase 1 — Complete
+The phases below describe user-visible outcomes, not just the presence of interfaces or UI shells.
+
+### Phase 0 — Foundation *(complete)*
+
+Native SwiftUI application shell, modular Swift Package structure, SQLite persistence, security-scoped folder access, and automated domain/indexing/imaging/persistence tests.
+
+### Phase 1 — Local asset library *(core complete)*
 
 Local visual asset workbench: authorized indexing, rich metadata, incremental maintenance, browse/search/filter, duplicate detection, batch processing, export history, and derivative lineage.
 
-### Phase 2 — In Progress
+Remaining work is primarily hardening: large-library performance, clearer index/tool health, recovery flows, and real-world usability validation.
 
-- Lightweight image and video editing (early access in current builds).
-- AI generation with pluggable adapters (OpenAI implemented; local model adapter planned).
-- Deeper canvas editing, more export presets, and a fuller version-lineage UI.
+### Phase 2 — Native editing workbench *(beta, in progress)*
 
-### Phase 3 — Planned
+Already available:
+
+- Non-destructive image geometry, basic global adjustments, annotations, masks, preview, and export.
+- Video preview, trim, transform, export, and audio extraction.
+- Processing history and a basic lineage view.
+
+Next editing milestone:
+
+- RGB and luminance histograms with interactive black point, white point, and gamma controls.
+- Levels and curves, plus HSL/HSV color-range editing rather than only whole-image saturation.
+- White balance/tint, highlights/shadows, clarity/definition, sharpen, noise reduction, vignette, and reusable presets.
+- Undo/redo history, before/after comparison, zoom/pan, and saved edit sessions.
+- Better layer controls and mask-assisted local adjustments.
+
+### Phase 3 — Synclip.ai image intelligence *(next)*
+
+- Replace the direct provider prototype with a tested Synclip.ai adapter.
+- Fetch or configure an explicit model catalog and route capabilities by model.
+- Support image-to-image, inpainting, outpainting, background removal, super-resolution, and style variants before expanding scope.
+- Treat generation as asynchronous jobs with progress, cancellation, retry, timeout, and recoverable failure states.
+- Show model, estimated cost/credits, output parameters, prompt, source image, and mask before submission.
+- Store downloaded results locally and attach complete provenance to lineage records.
+- Keep uploads explicit and disclose when an operation leaves the Mac.
+
+### Phase 4 — Semantic organization, automation, and generative video *(later)*
 
 - Semantic and image-to-image search.
 - Automatic clustering and project asset association.
 - Configurable local automation workflows.
-- Optional cloud/provider integrations without default uploading.
+- Synclip.ai video generation and image-to-video only after the image API workflow is stable.
+- Queue/history UI for long-running generation and reusable multi-step workflows.
 
 ---
 

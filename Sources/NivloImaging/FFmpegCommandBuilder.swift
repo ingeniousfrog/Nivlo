@@ -10,8 +10,9 @@ public struct FFmpegCommandBuilder: Sendable, Equatable {
     self.arguments = arguments
   }
 
-  public static func build(request: VideoEditRequest, ffmpegExecutable: URL) -> FFmpegCommandBuilder {
-  if request.extractAudioOnly {
+  public static func build(request: VideoEditRequest, ffmpegExecutable: URL) -> FFmpegCommandBuilder
+  {
+    if request.extractAudioOnly {
       return buildAudioExtract(request: request, ffmpegExecutable: ffmpegExecutable)
     }
 
@@ -48,13 +49,25 @@ public struct FFmpegCommandBuilder: Sendable, Equatable {
     if !filters.isEmpty {
       arguments.append(contentsOf: ["-vf", filters.joined(separator: ",")])
     }
+    let audioFilters = buildAudioFilters(request)
+    if !audioFilters.isEmpty {
+      arguments.append(contentsOf: ["-af", audioFilters.joined(separator: ",")])
+    }
+    arguments.append(contentsOf: ["-c:v", request.videoCodec])
+    if request.videoCodec.hasSuffix("_videotoolbox") {
+      arguments.append(contentsOf: [
+        "-q:v",
+        String(max(1, min(100, 100 - request.crf * 2))),
+      ])
+    } else {
+      arguments.append(contentsOf: [
+        "-crf",
+        String(request.crf),
+        "-preset",
+        request.preset,
+      ])
+    }
     arguments.append(contentsOf: [
-      "-c:v",
-      request.videoCodec,
-      "-crf",
-      String(request.crf),
-      "-preset",
-      request.preset,
       "-c:a",
       "aac",
       request.outputURL.path,
@@ -82,7 +95,32 @@ public struct FFmpegCommandBuilder: Sendable, Equatable {
     case .mp3:
       arguments.append(contentsOf: ["-c:a", "libmp3lame", "-q:a", "2", request.outputURL.path])
     }
+    let audioFilters = buildAudioFilters(request)
+    if !audioFilters.isEmpty {
+      let outputURL = arguments.removeLast()
+      arguments.append(contentsOf: ["-af", audioFilters.joined(separator: ","), outputURL])
+    }
     return FFmpegCommandBuilder(executable: ffmpegExecutable, arguments: arguments)
+  }
+
+  private static func buildAudioFilters(_ request: VideoEditRequest) -> [String] {
+    var filters: [String] = []
+    if request.volume != 1 {
+      filters.append("volume=\(request.volume)")
+    }
+    let duration = max(
+      0,
+      request.trimRange.endSeconds - request.trimRange.startSeconds
+    )
+    if request.fadeInSeconds > 0 {
+      filters.append("afade=t=in:st=0:d=\(request.fadeInSeconds)")
+    }
+    if request.fadeOutSeconds > 0 {
+      let fadeDuration = min(request.fadeOutSeconds, duration)
+      let start = max(0, duration - fadeDuration)
+      filters.append("afade=t=out:st=\(start):d=\(fadeDuration)")
+    }
+    return filters
   }
 
   private static func formatSeconds(_ value: Double) -> String {

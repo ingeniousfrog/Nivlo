@@ -90,3 +90,45 @@ public protocol AssetEnrichmentRepository: Sendable {
   func enrichments() async throws -> [AssetEnrichment]
   func upsertEnrichments(_ enrichments: [AssetEnrichment]) async throws
 }
+
+public struct EnrichmentFailureRecord: Equatable, Sendable {
+  public let assetID: AssetID
+  public let message: String
+  public let failedAt: Date
+
+  public init(assetID: AssetID, message: String, failedAt: Date) {
+    self.assetID = assetID
+    self.message = message
+    self.failedAt = failedAt
+  }
+}
+
+public struct IndexHealthRecord: Equatable, Sendable {
+  public let lastSuccessfulScanAt: Date?
+  public let lastSuccessfulEnrichmentAt: Date?
+  public let lastErrorMessage: String?
+
+  public init(
+    lastSuccessfulScanAt: Date? = nil,
+    lastSuccessfulEnrichmentAt: Date? = nil,
+    lastErrorMessage: String? = nil
+  ) {
+    self.lastSuccessfulScanAt = lastSuccessfulScanAt
+    self.lastSuccessfulEnrichmentAt = lastSuccessfulEnrichmentAt
+    self.lastErrorMessage = lastErrorMessage
+  }
+}
+
+public protocol IndexMaintenanceRepository: Sendable {
+  func indexHealth() async throws -> IndexHealthRecord
+  func recordSuccessfulScan(at date: Date) async throws
+  func recordIndexError(_ message: String?) async throws
+  func enrichmentFailures() async throws -> [EnrichmentFailureRecord]
+  func replaceEnrichmentFailures(
+    _ failures: [EnrichmentFailureRecord]
+  ) async throws
+  func removeEnrichments(for assetIDs: Set<AssetID>) async throws
+  func removeAllEnrichments() async throws
+  func rebuildSearchIndex() async throws
+  func integrityCheck() async throws -> String
+}

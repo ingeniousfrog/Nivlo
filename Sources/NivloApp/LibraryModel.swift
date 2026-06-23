@@ -20,12 +20,15 @@ final class LibraryModel: ObservableObject {
   @Published private(set) var enrichmentStatusMessage = "Rich index pending"
   @Published private(set) var validationStatusMessage = "Validation idle"
   @Published private(set) var processingStatusMessage = "Processing idle"
+  @Published private(set) var indexHealth = IndexHealthRecord()
+  @Published private(set) var failedEnrichments: [EnrichmentFailureRecord] = []
+  @Published private(set) var inaccessibleRootCount = 0
   @Published private(set) var lineageByAssetID: [AssetID: AssetLineageGraph] = [:]
   @Published var errorMessage: String?
 
   private let repository:
     any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
-      & ProcessingHistoryRepository
+      & ProcessingHistoryRepository & IndexMaintenanceRepository
   private let scanner: DirectoryScanner
   private let rootAccessManager: LibraryRootAccessManager
   private let enrichmentPipeline: ImageEnrichmentPipeline
@@ -65,6 +68,9 @@ final class LibraryModel: ObservableObject {
           .map { ($0.assetID, $0) }
       )
       updateSimilarityGroups()
+      indexHealth = try await repository.indexHealth()
+      failedEnrichments = try await repository.enrichmentFailures()
+      inaccessibleRootCount = restoration.failures.count
       await startWatchingActiveRoots()
       await startBackgroundValidation()
       if let repositoryError = restoration.repositoryError {
@@ -103,11 +109,13 @@ final class LibraryModel: ObservableObject {
       let summary = try await scanner.scan(rootURL: rootURL) { [weak self] progress in
         await self?.applyScanProgress(progress, folderName: rootURL.lastPathComponent)
       }
+      try await repository.recordSuccessfulScan(at: Date())
       assets = try await repository.assets()
       await startBackgroundValidation()
       statusMessage = scanStatus(summary)
       shouldEnrichAssets = true
     } catch {
+      try? await repository.recordIndexError(error.localizedDescription)
       errorMessage = error.localizedDescription
       if roots.contains(where: { $0.pathHint == rootURL.standardizedFileURL.path }) {
         statusMessage = "Folder added · scan failed"
@@ -159,7 +167,9 @@ final class LibraryModel: ObservableObject {
       await startWatchingActiveRoots()
       await startBackgroundValidation()
       statusMessage = "\(assets.count) images indexed · removed \(root.displayName)"
+      await refreshIndexHealth()
     } catch {
+      try? await repository.recordIndexError(error.localizedDescription)
       errorMessage = error.localizedDescription
       statusMessage = "Couldn’t remove folder"
     }
@@ -415,6 +425,7 @@ final class LibraryModel: ObservableObject {
       let summary = try await validationScheduler.validateNow(
         rootURLs: await rootAccessManager.activeURLs()
       )
+      try await repository.recordSuccessfulScan(at: Date())
       if let lastValidatedAt = summary.lastValidatedAt {
         validationStatusMessage =
           "Validated \(summary.validatedRootCount) folders · \(summary.failureCount) failed · \(lastValidatedAt.formatted())"
@@ -422,9 +433,85 @@ final class LibraryModel: ObservableObject {
         validationStatusMessage = "No active folders to validate"
       }
       assets = try await repository.assets()
+      await refreshIndexHealth()
       await enrichAccessibleAssets()
     } catch {
+      try? await repository.recordIndexError(error.localizedDescription)
       validationStatusMessage = "Validation failed"
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func pauseEnrichment() async {
+    await enrichmentPipeline.pause()
+    enrichmentStatusMessage = "Rich indexing paused"
+  }
+
+  func resumeEnrichment() async {
+    await enrichmentPipeline.resume()
+    enrichmentStatusMessage = "Building thumbnails and fingerprints…"
+  }
+
+  func cancelEnrichment() async {
+    await enrichmentPipeline.cancel()
+    enrichmentStatusMessage = "Stopping rich indexing…"
+  }
+
+  func retryFailedEnrichments() async {
+    guard !failedEnrichments.isEmpty else { return }
+    do {
+      let failedIDs = Set(failedEnrichments.map(\.assetID))
+      try await repository.removeEnrichments(for: failedIDs)
+      try await repository.replaceEnrichmentFailures([])
+      failedEnrichments = []
+      await enrichAccessibleAssets()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func rebuildRichIndex() async {
+    guard !isEnriching else { return }
+    do {
+      try await repository.removeAllEnrichments()
+      try await repository.rebuildSearchIndex()
+      enrichments = [:]
+      failedEnrichments = []
+      updateSimilarityGroups()
+      enrichmentStatusMessage = "Rich index cleared · rebuilding…"
+      await enrichAccessibleAssets()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func rebuildSearchIndex() async {
+    do {
+      try await repository.rebuildSearchIndex()
+      processingStatusMessage = "Search index rebuilt"
+      await refreshIndexHealth()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func rescanAllRoots() async {
+    guard !isScanning else { return }
+    for root in roots {
+      guard let url = await rootAccessManager.activeURL(for: root.id) else {
+        continue
+      }
+      await scanActiveRoot(url)
+    }
+    await refreshIndexHealth()
+  }
+
+  func verifyIndexIntegrity() async {
+    do {
+      let result = try await repository.integrityCheck()
+      validationStatusMessage =
+        result == "ok" ? "SQLite integrity check passed" : "SQLite: \(result)"
+    } catch {
       errorMessage = error.localizedDescription
     }
   }
@@ -438,11 +525,13 @@ final class LibraryModel: ObservableObject {
     statusMessage = "Scanning \(rootURL.lastPathComponent)…"
     do {
       let summary = try await scanner.scan(rootURL: rootURL)
+      try await repository.recordSuccessfulScan(at: Date())
       assets = try await repository.assets()
       await startWatchingActiveRoots()
       await startBackgroundValidation()
       statusMessage = scanStatus(summary)
     } catch {
+      try? await repository.recordIndexError(error.localizedDescription)
       errorMessage = error.localizedDescription
       statusMessage = "Scan failed"
     }
@@ -482,6 +571,8 @@ final class LibraryModel: ObservableObject {
       )
       updateSimilarityGroups()
       statusMessage = "\(assets.count) images indexed · updated from disk"
+      try await repository.recordSuccessfulScan(at: Date())
+      await refreshIndexHealth()
       await enrichAccessibleAssets()
     } catch {
       errorMessage = error.localizedDescription
@@ -504,19 +595,40 @@ final class LibraryModel: ObservableObject {
           }
       }
       let summary = try await enrichmentPipeline.enrich(accessibleAssets)
+      let failureRecords = summary.failures.map {
+        EnrichmentFailureRecord(
+          assetID: $0.assetID,
+          message: $0.message,
+          failedAt: Date()
+        )
+      }
+      try await repository.replaceEnrichmentFailures(failureRecords)
+      failedEnrichments = failureRecords
       enrichments = Dictionary(
         uniqueKeysWithValues: try await repository.enrichments()
           .map { ($0.assetID, $0) }
       )
       updateSimilarityGroups()
       enrichmentStatusMessage =
-        summary.failures.isEmpty
-        ? "\(enrichments.count) thumbnails and fingerprints ready"
-        : "\(summary.completedCount) enriched · \(summary.failures.count) failed"
+        summary.cancelledCount > 0
+        ? "\(summary.completedCount) enriched · \(summary.cancelledCount) cancelled"
+        : summary.failures.isEmpty
+          ? "\(enrichments.count) thumbnails and fingerprints ready"
+          : "\(summary.completedCount) enriched · \(summary.failures.count) failed"
+      await refreshIndexHealth()
     } catch {
       enrichmentStatusMessage = "Rich indexing failed"
+      try? await repository.recordIndexError(error.localizedDescription)
     }
     isEnriching = false
+  }
+
+  private func refreshIndexHealth() async {
+    indexHealth = (try? await repository.indexHealth()) ?? indexHealth
+    failedEnrichments =
+      (try? await repository.enrichmentFailures()) ?? failedEnrichments
+    let activeRootCount = (await rootAccessManager.activeURLs()).count
+    inaccessibleRootCount = max(0, roots.count - activeRootCount)
   }
 
   private func updateSimilarityGroups() {
@@ -605,7 +717,7 @@ final class LibraryModel: ObservableObject {
 private struct LibraryDependencies {
   let repository:
     any AssetRepository & AssetEnrichmentRepository & LibraryRootRepository
-      & ProcessingHistoryRepository
+      & ProcessingHistoryRepository & IndexMaintenanceRepository
   let scanner: DirectoryScanner
   let rootAccessManager: LibraryRootAccessManager
   let enrichmentPipeline: ImageEnrichmentPipeline

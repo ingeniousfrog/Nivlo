@@ -136,6 +136,75 @@ struct CoreImageGeometryExporterTests {
     }
     #expect(redBounds?.height ?? 0 > redBounds?.width ?? 0)
   }
+
+  @Test("levels curves and color bands alter channel output")
+  func advancedGlobalAdjustments() throws {
+    let fixture = try GeometryExportFixture(width: 100, height: 100)
+    let outputURL = fixture.rootURL.appending(path: "advanced-adjustments.png")
+    let exporter = CoreImageGeometryExporter()
+    var adjustments = ImageAdjustmentSettings(
+      vibrance: 0.3,
+      levels: [
+        .rgb: ImageLevels(blackPoint: 0.05, whitePoint: 0.85, gamma: 1.2)
+      ],
+      curves: [
+        .red: ToneCurve(points: [
+          ToneCurvePoint(x: 0, y: 0),
+          ToneCurvePoint(x: 0.2, y: 0.8),
+          ToneCurvePoint(x: 1, y: 1),
+        ])
+      ],
+      colorBands: [
+        .blue: HSLBandAdjustment(hue: 0.1, saturation: 0.2, luminance: 0.1)
+      ]
+    )
+    adjustments.tint = 0.1
+
+    try exporter.exportPNG(
+      sourceURL: fixture.imageURL,
+      outputURL: outputURL,
+      adjustments: adjustments
+    )
+
+    let source = try pixelRGBA(at: CGPoint(x: 50, y: 50), in: fixture.imageURL)
+    let output = try pixelRGBA(at: CGPoint(x: 50, y: 50), in: outputURL)
+    #expect(abs(source.red - output.red) > 0.1)
+    #expect(abs(source.blue - output.blue) > 0.02)
+  }
+
+  @Test("local adjustment changes only its painted mask")
+  func localAdjustmentMask() throws {
+    let fixture = try GeometryExportFixture(width: 100, height: 100)
+    let outputURL = fixture.rootURL.appending(path: "local-adjustment.png")
+    let exporter = CoreImageGeometryExporter()
+
+    try exporter.render(
+      sourceURL: fixture.imageURL,
+      outputURL: outputURL,
+      snapshot: ImageEditSnapshot(
+        localAdjustments: [
+          LocalImageAdjustment(
+            name: "Left",
+            settings: ImageAdjustmentSettings(exposure: 1),
+            maskStrokes: [
+              MaskStroke(
+                points: [
+                  MaskBrushPoint(x: 0.1, y: 0.5),
+                  MaskBrushPoint(x: 0.4, y: 0.5),
+                ],
+                brushRadius: 0.3
+              )
+            ]
+          )
+        ]
+      )
+    )
+
+    let left = try pixelRGBA(at: CGPoint(x: 20, y: 50), in: outputURL)
+    let right = try pixelRGBA(at: CGPoint(x: 85, y: 50), in: outputURL)
+    #expect(left.red > right.red)
+    #expect(left.green > right.green)
+  }
 }
 
 private struct GeometryExportFixture {

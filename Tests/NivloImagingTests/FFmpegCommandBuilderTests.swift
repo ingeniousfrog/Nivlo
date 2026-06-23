@@ -55,4 +55,32 @@ struct FFmpegCommandBuilderTests {
     #expect(command.arguments.contains("-c:a"))
     #expect(command.arguments.contains("aac"))
   }
+
+  @Test("builds volume fades and a hardware codec preset")
+  func buildsAudioAdjustmentsAndHardwareCodec() {
+    let request = VideoEditRequest(
+      sourceURL: URL(filePath: "/tmp/input.mp4"),
+      outputURL: URL(filePath: "/tmp/output.mp4"),
+      trimRange: VideoTrimRange(
+        startSeconds: 2,
+        endSeconds: 12,
+        durationSeconds: 20
+      ),
+      videoCodec: "h264_videotoolbox",
+      volume: 0.75,
+      fadeInSeconds: 1.5,
+      fadeOutSeconds: 2
+    )
+
+    let command = FFmpegCommandBuilder.build(
+      request: request,
+      ffmpegExecutable: URL(filePath: "/usr/local/bin/ffmpeg")
+    )
+    let joined = command.arguments.joined(separator: " ")
+
+    #expect(joined.contains("-c:v h264_videotoolbox"))
+    #expect(joined.contains("volume=0.75"))
+    #expect(joined.contains("afade=t=in:st=0:d=1.5"))
+    #expect(joined.contains("afade=t=out:st=8.0:d=2.0"))
+  }
 }

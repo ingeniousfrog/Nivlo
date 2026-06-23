@@ -27,7 +27,7 @@ public enum SQLiteRepositoryError: Error, LocalizedError, Sendable {
 
 public actor SQLiteAssetRepository:
   AssetRepository, AssetEnrichmentRepository, LibraryRootRepository,
-  ProcessingHistoryRepository
+  ProcessingHistoryRepository, IndexMaintenanceRepository
 {
   private let connection: SQLiteConnection
 
@@ -573,11 +573,178 @@ public actor SQLiteAssetRepository:
         try stepToCompletion(statement, sql: sql)
         try upsertSearchEnrichment(enrichment)
       }
+      let healthSQL = """
+        UPDATE index_health
+        SET last_successful_enrichment_at = ?, last_error_message = NULL
+        WHERE id = 1;
+        """
+      let healthStatement = try prepare(healthSQL)
+      sqlite3_bind_double(healthStatement, 1, Date().timeIntervalSince1970)
+      do {
+        try stepToCompletion(healthStatement, sql: healthSQL)
+        sqlite3_finalize(healthStatement)
+      } catch {
+        sqlite3_finalize(healthStatement)
+        throw error
+      }
       try execute("COMMIT;")
     } catch {
       try? execute("ROLLBACK;")
       throw error
     }
+  }
+
+  public func indexHealth() throws -> IndexHealthRecord {
+    let sql = """
+      SELECT last_successful_scan_at, last_successful_enrichment_at,
+             last_error_message
+      FROM index_health
+      WHERE id = 1;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+      try requireFinished(statement, sql: sql)
+      return IndexHealthRecord()
+    }
+    return IndexHealthRecord(
+      lastSuccessfulScanAt: date(at: 0, from: statement),
+      lastSuccessfulEnrichmentAt: date(at: 1, from: statement),
+      lastErrorMessage:
+        sqlite3_column_type(statement, 2) == SQLITE_NULL
+        ? nil : text(at: 2, from: statement)
+    )
+  }
+
+  public func recordSuccessfulScan(at date: Date) throws {
+    let sql = """
+      UPDATE index_health
+      SET last_successful_scan_at = ?, last_error_message = NULL
+      WHERE id = 1;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    sqlite3_bind_double(statement, 1, date.timeIntervalSince1970)
+    try stepToCompletion(statement, sql: sql)
+  }
+
+  public func recordIndexError(_ message: String?) throws {
+    let sql = """
+      UPDATE index_health
+      SET last_error_message = ?
+      WHERE id = 1;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    if let message {
+      try bind(message, at: 1, to: statement, sql: sql)
+    } else {
+      sqlite3_bind_null(statement, 1)
+    }
+    try stepToCompletion(statement, sql: sql)
+  }
+
+  public func enrichmentFailures() throws -> [EnrichmentFailureRecord] {
+    let sql = """
+      SELECT volume_id, file_id, message, failed_at
+      FROM enrichment_failures
+      ORDER BY failed_at DESC, volume_id ASC, file_id ASC;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    var failures: [EnrichmentFailureRecord] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      failures.append(
+        EnrichmentFailureRecord(
+          assetID: AssetID(
+            volumeIdentifier: text(at: 0, from: statement),
+            fileIdentifier: text(at: 1, from: statement)
+          ),
+          message: text(at: 2, from: statement),
+          failedAt: Date(
+            timeIntervalSince1970: sqlite3_column_double(statement, 3)
+          )
+        )
+      )
+    }
+    try requireFinished(statement, sql: sql)
+    return failures
+  }
+
+  public func replaceEnrichmentFailures(
+    _ failures: [EnrichmentFailureRecord]
+  ) throws {
+    let sql = """
+      INSERT INTO enrichment_failures(volume_id, file_id, message, failed_at)
+      VALUES (?, ?, ?, ?);
+      """
+    try execute("BEGIN IMMEDIATE TRANSACTION;")
+    do {
+      try execute("DELETE FROM enrichment_failures;")
+      let statement = try prepare(sql)
+      defer { sqlite3_finalize(statement) }
+      for failure in failures {
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
+        try bind(failure.assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+        try bind(failure.assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+        try bind(failure.message, at: 3, to: statement, sql: sql)
+        sqlite3_bind_double(statement, 4, failure.failedAt.timeIntervalSince1970)
+        try stepToCompletion(statement, sql: sql)
+      }
+      try execute("COMMIT;")
+    } catch {
+      try? execute("ROLLBACK;")
+      throw error
+    }
+  }
+
+  public func removeEnrichments(for assetIDs: Set<AssetID>) throws {
+    guard !assetIDs.isEmpty else { return }
+    let sql = """
+      DELETE FROM asset_enrichments
+      WHERE volume_id = ? AND file_id = ?;
+      """
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    for assetID in assetIDs {
+      sqlite3_reset(statement)
+      sqlite3_clear_bindings(statement)
+      try bind(assetID.volumeIdentifier, at: 1, to: statement, sql: sql)
+      try bind(assetID.fileIdentifier, at: 2, to: statement, sql: sql)
+      try stepToCompletion(statement, sql: sql)
+    }
+  }
+
+  public func removeAllEnrichments() throws {
+    try execute("DELETE FROM asset_enrichments;")
+    try execute("DELETE FROM enrichment_failures;")
+  }
+
+  public func rebuildSearchIndex() throws {
+    try execute("BEGIN IMMEDIATE TRANSACTION;")
+    do {
+      try execute("DELETE FROM asset_search_fts;")
+      try upsertSearchAssets(assets())
+      for enrichment in try enrichments() {
+        try upsertSearchEnrichment(enrichment)
+      }
+      try execute("COMMIT;")
+    } catch {
+      try? execute("ROLLBACK;")
+      throw error
+    }
+  }
+
+  public func integrityCheck() throws -> String {
+    let sql = "PRAGMA quick_check;"
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+      try requireFinished(statement, sql: sql)
+      return "unknown"
+    }
+    return text(at: 0, from: statement)
   }
 
   private func assetIDs(
@@ -843,7 +1010,8 @@ public actor SQLiteAssetRepository:
       let parentIDString = text(at: 7, from: statement)
       parentRecordID = UUID(uuidString: parentIDString)
     }
-    let derivativeKindText = sqlite3_column_type(statement, 8) == SQLITE_NULL
+    let derivativeKindText =
+      sqlite3_column_type(statement, 8) == SQLITE_NULL
       ? DerivativeKind.delivery.rawValue
       : text(at: 8, from: statement)
     let derivativeKind = DerivativeKind(rawValue: derivativeKindText) ?? .delivery
@@ -1153,6 +1321,7 @@ public actor SQLiteAssetRepository:
         """
     )
     try applyMigration8(database)
+    try applyMigration9(database)
   }
 
   private static func applyMigration8(_ database: OpaquePointer) throws {
@@ -1169,6 +1338,35 @@ public actor SQLiteAssetRepository:
         ADD COLUMN derivative_kind TEXT NOT NULL DEFAULT 'delivery';
 
         INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
+        """
+    )
+  }
+
+  private static func applyMigration9(_ database: OpaquePointer) throws {
+    guard !hasMigration(database, version: 9) else {
+      return
+    }
+    try execute(
+      database,
+      sql: """
+        CREATE TABLE IF NOT EXISTS index_health (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_successful_scan_at REAL,
+            last_successful_enrichment_at REAL,
+            last_error_message TEXT
+        );
+
+        INSERT OR IGNORE INTO index_health(id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS enrichment_failures (
+            volume_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            message TEXT NOT NULL,
+            failed_at REAL NOT NULL,
+            PRIMARY KEY (volume_id, file_id)
+        );
+
+        INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
         """
     )
   }

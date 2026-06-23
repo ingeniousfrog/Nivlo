@@ -45,6 +45,51 @@ struct ImageEnrichmentPipelineTests {
     #expect(summary.failures.map(\.assetID) == [broken.id])
     #expect(await repository.enrichments().map(\.assetID) == [good.id])
   }
+
+  @Test("bounds concurrent enrichment work")
+  func boundsConcurrency() async throws {
+    let assets = (0..<12).map { pipelineAsset(fileID: "\($0)") }
+    let repository = PipelineRepository()
+    let enricher = PipelineEnricher(delay: .milliseconds(10))
+    let pipeline = ImageEnrichmentPipeline(
+      repository: repository,
+      enricher: enricher,
+      maximumConcurrentTasks: 3
+    )
+
+    let summary = try await pipeline.enrich(assets)
+
+    #expect(summary.completedCount == assets.count)
+    #expect(await enricher.maximumObservedConcurrency() <= 3)
+    #expect(await enricher.maximumObservedConcurrency() > 1)
+  }
+
+  @Test("pause resume and cancellation preserve completed work")
+  func controlsExecution() async throws {
+    let assets = (0..<20).map { pipelineAsset(fileID: "\($0)") }
+    let repository = PipelineRepository()
+    let enricher = PipelineEnricher(delay: .milliseconds(15))
+    let pipeline = ImageEnrichmentPipeline(
+      repository: repository,
+      enricher: enricher,
+      maximumConcurrentTasks: 2
+    )
+
+    let task = Task {
+      try await pipeline.enrich(assets)
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    await pipeline.pause()
+    #expect(await pipeline.state == .paused)
+    await pipeline.resume()
+    try await Task.sleep(for: .milliseconds(20))
+    await pipeline.cancel()
+    let summary = try await task.value
+
+    #expect(summary.cancelledCount > 0)
+    #expect(summary.completedCount > 0)
+    #expect(await pipeline.state == .idle)
+  }
 }
 
 private actor PipelineRepository: AssetEnrichmentRepository {
@@ -72,13 +117,26 @@ private actor PipelineRepository: AssetEnrichmentRepository {
 
 private actor PipelineEnricher: AssetImageEnriching {
   private let failingIDs: Set<AssetID>
+  private let delay: Duration?
   private var processedIDs: [AssetID] = []
+  private var activeCount = 0
+  private var maximumActiveCount = 0
 
-  init(failingIDs: Set<AssetID> = []) {
+  init(
+    failingIDs: Set<AssetID> = [],
+    delay: Duration? = nil
+  ) {
     self.failingIDs = failingIDs
+    self.delay = delay
   }
 
-  func enrich(_ asset: ImageAsset) throws -> AssetEnrichment {
+  func enrich(_ asset: ImageAsset) async throws -> AssetEnrichment {
+    activeCount += 1
+    maximumActiveCount = max(maximumActiveCount, activeCount)
+    defer { activeCount -= 1 }
+    if let delay {
+      try await Task.sleep(for: delay)
+    }
     processedIDs.append(asset.id)
     guard !failingIDs.contains(asset.id) else {
       throw PipelineError.corrupt
@@ -88,6 +146,10 @@ private actor PipelineEnricher: AssetImageEnriching {
 
   func enrichedIDs() -> [AssetID] {
     processedIDs
+  }
+
+  func maximumObservedConcurrency() -> Int {
+    maximumActiveCount
   }
 }
 

@@ -51,6 +51,7 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       adjustments: snapshot.adjustments,
       annotations: snapshot.annotations,
       maskStrokes: snapshot.maskStrokes,
+      localAdjustments: snapshot.localAdjustments,
       layers: snapshot.layers
     )
   }
@@ -64,6 +65,7 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
     adjustments: ImageAdjustmentSettings = .neutral,
     annotations: [ImageAnnotation] = [],
     maskStrokes: [MaskStroke] = [],
+    localAdjustments: [LocalImageAdjustment] = [],
     layers: [EditorLayer] = EditorLayer.defaults
   ) throws {
     guard var image = CIImage(contentsOf: sourceURL) else {
@@ -85,16 +87,22 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
       by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
     )
 
-    image = applyAdjustments(
-      adjustments,
-      to: image,
-      enabled: layers.first(where: { $0.kind == .adjustments })?.isVisible != false
-    )
-    if layers.first(where: { $0.kind == .mask })?.isVisible != false, !maskStrokes.isEmpty {
-      image = applyMask(maskStrokes, to: image)
-    }
-    if layers.first(where: { $0.kind == .annotations })?.isVisible != false {
-      image = rasterizeAnnotations(annotations, over: image)
+    let orderedLayers = layers.isEmpty ? EditorLayer.defaults : layers
+    for layer in orderedLayers where layer.isVisible {
+      switch layer.kind {
+      case .background:
+        continue
+      case .adjustments:
+        image = applyAdjustments(adjustments, to: image)
+      case .localAdjustments:
+        image = applyLocalAdjustments(localAdjustments, to: image)
+      case .mask:
+        if !maskStrokes.isEmpty {
+          image = applyMask(maskStrokes, to: image)
+        }
+      case .annotations:
+        image = rasterizeAnnotations(annotations, over: image)
+      }
     }
 
     if !cropRect.isEffectivelyFull {
@@ -135,12 +143,8 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
 
   private func applyAdjustments(
     _ settings: ImageAdjustmentSettings,
-    to image: CIImage,
-    enabled: Bool
+    to image: CIImage
   ) -> CIImage {
-    guard enabled else {
-      return image
-    }
     var output = image
     if settings.exposure != 0,
       let filter = CIFilter(name: "CIExposureAdjust")
@@ -168,13 +172,275 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
     {
       filter.setValue(output, forKey: kCIInputImageKey)
       filter.setValue(
-        CIVector(x: 6_500 + settings.warmth * 1_500, y: 0),
+        CIVector(
+          x: 6_500 + settings.warmth * 1_500,
+          y: settings.tint * 150
+        ),
+        forKey: "inputNeutral"
+      )
+      filter.setValue(CIVector(x: 6_500, y: 0), forKey: "inputTargetNeutral")
+      output = filter.outputImage ?? output
+    } else if settings.tint != 0,
+      let filter = CIFilter(name: "CITemperatureAndTint")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(
+        CIVector(x: 6_500, y: settings.tint * 150),
         forKey: "inputNeutral"
       )
       filter.setValue(CIVector(x: 6_500, y: 0), forKey: "inputTargetNeutral")
       output = filter.outputImage ?? output
     }
+    if settings.highlights != 0 || settings.shadows != 0,
+      let filter = CIFilter(name: "CIHighlightShadowAdjust")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(settings.shadows, forKey: "inputShadowAmount")
+      filter.setValue(1 + settings.highlights, forKey: "inputHighlightAmount")
+      output = filter.outputImage ?? output
+    }
+    if settings.vibrance != 0,
+      let filter = CIFilter(name: "CIVibrance")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(settings.vibrance, forKey: "inputAmount")
+      output = filter.outputImage ?? output
+    }
+    output = applyColorMapping(settings, to: output)
+    if settings.clarity > 0,
+      let filter = CIFilter(name: "CIUnsharpMask")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(1.5 + settings.clarity * 3, forKey: kCIInputRadiusKey)
+      filter.setValue(settings.clarity * 1.5, forKey: kCIInputIntensityKey)
+      output = filter.outputImage ?? output
+    } else if settings.clarity < 0,
+      let filter = CIFilter(name: "CIGaussianBlur")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(abs(settings.clarity) * 2, forKey: kCIInputRadiusKey)
+      output = (filter.outputImage ?? output).cropped(to: output.extent)
+    }
+    if settings.sharpness > 0,
+      let filter = CIFilter(name: "CISharpenLuminance")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(settings.sharpness * 1.5, forKey: kCIInputSharpnessKey)
+      filter.setValue(1 + settings.sharpness * 2, forKey: kCIInputRadiusKey)
+      output = filter.outputImage ?? output
+    }
+    if settings.noiseReduction > 0,
+      let filter = CIFilter(name: "CINoiseReduction")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(settings.noiseReduction * 0.08, forKey: "inputNoiseLevel")
+      filter.setValue(settings.noiseReduction * 0.6, forKey: "inputSharpness")
+      output = filter.outputImage ?? output
+    }
+    if settings.vignette > 0,
+      let filter = CIFilter(name: "CIVignette")
+    {
+      filter.setValue(output, forKey: kCIInputImageKey)
+      filter.setValue(settings.vignette * 2, forKey: kCIInputIntensityKey)
+      filter.setValue(
+        min(output.extent.width, output.extent.height) * 0.45,
+        forKey: kCIInputRadiusKey
+      )
+      output = filter.outputImage ?? output
+    }
     return output
+  }
+
+  private func applyLocalAdjustments(
+    _ adjustments: [LocalImageAdjustment],
+    to image: CIImage
+  ) -> CIImage {
+    adjustments.reduce(image) { current, adjustment in
+      guard
+        adjustment.isVisible,
+        !adjustment.maskStrokes.isEmpty,
+        let mask = maskImage(
+          adjustment.maskStrokes,
+          extent: current.extent.integral
+        ),
+        let blend = CIFilter(name: "CIBlendWithMask")
+      else {
+        return current
+      }
+      blend.setValue(
+        applyAdjustments(adjustment.settings, to: current),
+        forKey: kCIInputImageKey
+      )
+      blend.setValue(current, forKey: kCIInputBackgroundImageKey)
+      blend.setValue(mask, forKey: kCIInputMaskImageKey)
+      return blend.outputImage ?? current
+    }
+  }
+
+  private func applyColorMapping(
+    _ settings: ImageAdjustmentSettings,
+    to image: CIImage
+  ) -> CIImage {
+    guard
+      !settings.levels.isEmpty
+        || !settings.curves.isEmpty
+        || settings.colorBands.values.contains(where: { $0 != .neutral })
+    else {
+      return image
+    }
+    let dimension = 32
+    var cube = [Float]()
+    cube.reserveCapacity(dimension * dimension * dimension * 4)
+    for blueIndex in 0..<dimension {
+      for greenIndex in 0..<dimension {
+        for redIndex in 0..<dimension {
+          var red = Double(redIndex) / Double(dimension - 1)
+          var green = Double(greenIndex) / Double(dimension - 1)
+          var blue = Double(blueIndex) / Double(dimension - 1)
+          red = mapChannel(red, channel: .red, settings: settings)
+          green = mapChannel(green, channel: .green, settings: settings)
+          blue = mapChannel(blue, channel: .blue, settings: settings)
+          (red, green, blue) = applyColorBands(
+            red: red,
+            green: green,
+            blue: blue,
+            adjustments: settings.colorBands
+          )
+          cube.append(Float(red))
+          cube.append(Float(green))
+          cube.append(Float(blue))
+          cube.append(1)
+        }
+      }
+    }
+    let data = cube.withUnsafeBytes { Data($0) }
+    guard let filter = CIFilter(name: "CIColorCube") else {
+      return image
+    }
+    filter.setValue(image, forKey: kCIInputImageKey)
+    filter.setValue(dimension, forKey: "inputCubeDimension")
+    filter.setValue(data, forKey: "inputCubeData")
+    return filter.outputImage ?? image
+  }
+
+  private func mapChannel(
+    _ input: Double,
+    channel: ImageColorChannel,
+    settings: ImageAdjustmentSettings
+  ) -> Double {
+    var output = applyLevels(
+      input,
+      levels: settings.levels[.rgb] ?? .neutral
+    )
+    output = applyLevels(
+      output,
+      levels: settings.levels[channel] ?? .neutral
+    )
+    output = (settings.curves[channel] ?? .identity).value(at: output)
+    output = (settings.curves[.rgb] ?? .identity).value(at: output)
+    return min(max(output, 0), 1)
+  }
+
+  private func applyLevels(_ input: Double, levels: ImageLevels) -> Double {
+    let normalized = min(
+      max((input - levels.blackPoint) / (levels.whitePoint - levels.blackPoint), 0),
+      1
+    )
+    return pow(normalized, 1 / levels.gamma)
+  }
+
+  private func applyColorBands(
+    red: Double,
+    green: Double,
+    blue: Double,
+    adjustments: [HSLColorBand: HSLBandAdjustment]
+  ) -> (Double, Double, Double) {
+    var hsv = rgbToHSV(red: red, green: green, blue: blue)
+    for (band, adjustment) in adjustments where adjustment != .neutral {
+      let distance = circularHueDistance(hsv.hue, hueCenter(for: band))
+      let weight = max(0, 1 - distance / 0.14)
+      guard weight > 0 else { continue }
+      hsv.hue = normalizedHue(hsv.hue + adjustment.hue * 0.08 * weight)
+      hsv.saturation = min(
+        max(hsv.saturation + adjustment.saturation * weight, 0),
+        1
+      )
+      hsv.value = min(max(hsv.value + adjustment.luminance * weight, 0), 1)
+    }
+    return hsvToRGB(
+      hue: hsv.hue,
+      saturation: hsv.saturation,
+      value: hsv.value
+    )
+  }
+
+  private func rgbToHSV(
+    red: Double,
+    green: Double,
+    blue: Double
+  ) -> (hue: Double, saturation: Double, value: Double) {
+    let maximum = max(red, green, blue)
+    let minimum = min(red, green, blue)
+    let delta = maximum - minimum
+    let hue: Double
+    if delta == 0 {
+      hue = 0
+    } else if maximum == red {
+      hue = normalizedHue((green - blue) / delta / 6)
+    } else if maximum == green {
+      hue = normalizedHue(((blue - red) / delta + 2) / 6)
+    } else {
+      hue = normalizedHue(((red - green) / delta + 4) / 6)
+    }
+    return (
+      hue,
+      maximum == 0 ? 0 : delta / maximum,
+      maximum
+    )
+  }
+
+  private func hsvToRGB(
+    hue: Double,
+    saturation: Double,
+    value: Double
+  ) -> (Double, Double, Double) {
+    let sector = normalizedHue(hue) * 6
+    let index = Int(floor(sector)) % 6
+    let fraction = sector - floor(sector)
+    let p = value * (1 - saturation)
+    let q = value * (1 - fraction * saturation)
+    let t = value * (1 - (1 - fraction) * saturation)
+    switch index {
+    case 0: return (value, t, p)
+    case 1: return (q, value, p)
+    case 2: return (p, value, t)
+    case 3: return (p, q, value)
+    case 4: return (t, p, value)
+    default: return (value, p, q)
+    }
+  }
+
+  private func normalizedHue(_ value: Double) -> Double {
+    let remainder = value.truncatingRemainder(dividingBy: 1)
+    return remainder < 0 ? remainder + 1 : remainder
+  }
+
+  private func circularHueDistance(_ left: Double, _ right: Double) -> Double {
+    let distance = abs(left - right)
+    return min(distance, 1 - distance)
+  }
+
+  private func hueCenter(for band: HSLColorBand) -> Double {
+    switch band {
+    case .red: 0
+    case .orange: 1 / 12
+    case .yellow: 1 / 6
+    case .green: 1 / 3
+    case .aqua: 1 / 2
+    case .blue: 2 / 3
+    case .purple: 3 / 4
+    case .magenta: 11 / 12
+    }
   }
 
   private func rasterizeAnnotations(
@@ -283,7 +549,29 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
     #if !canImport(AppKit)
       return image
     #else
-      let extent = image.extent.integral
+      guard
+        let maskImage = maskImage(strokes, extent: image.extent.integral),
+        let filter = CIFilter(name: "CIBlendWithMask")
+      else {
+        return image
+      }
+      filter.setValue(image, forKey: kCIInputImageKey)
+      filter.setValue(
+        CIImage(color: .clear).cropped(to: image.extent),
+        forKey: kCIInputBackgroundImageKey
+      )
+      filter.setValue(maskImage, forKey: kCIInputMaskImageKey)
+      return filter.outputImage ?? image
+    #endif
+  }
+
+  private func maskImage(
+    _ strokes: [MaskStroke],
+    extent: CGRect
+  ) -> CIImage? {
+    #if !canImport(AppKit)
+      return nil
+    #else
       guard
         let maskContext = CGContext(
           data: nil,
@@ -295,7 +583,7 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
       else {
-        return image
+        return nil
       }
       maskContext.setFillColor(CGColor(gray: 0, alpha: 1))
       maskContext.fill(CGRect(origin: .zero, size: extent.size))
@@ -336,17 +624,8 @@ public struct CoreImageGeometryExporter: Sendable, EditedImageRendering {
           maskContext.strokePath()
         }
       }
-      guard
-        let maskCGImage = maskContext.makeImage(),
-        let filter = CIFilter(name: "CIBlendWithMask")
-      else {
-        return image
-      }
-      filter.setValue(image, forKey: kCIInputImageKey)
-      filter.setValue(
-        CIImage(color: .clear).cropped(to: extent), forKey: kCIInputBackgroundImageKey)
-      filter.setValue(CIImage(cgImage: maskCGImage), forKey: kCIInputMaskImageKey)
-      return filter.outputImage ?? image
+      guard let image = maskContext.makeImage() else { return nil }
+      return CIImage(cgImage: image)
     #endif
   }
 

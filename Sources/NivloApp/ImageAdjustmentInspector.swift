@@ -1,0 +1,342 @@
+import NivloDomain
+import NivloImaging
+import SwiftUI
+
+struct ImageAdjustmentInspector: View {
+  let language: NivloLanguage
+  @Binding var settings: ImageAdjustmentSettings
+  let histogram: ImageHistogram?
+  let presets: [ImageAdjustmentPreset]
+  @Binding var selectedPresetID: String
+  @Binding var presetName: String
+  let onSavePreset: () -> Void
+
+  @State private var levelChannel: ImageColorChannel = .rgb
+  @State private var curveChannel: ImageColorChannel = .rgb
+  @State private var colorBand: HSLColorBand = .red
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      if let histogram {
+        HistogramView(histogram: histogram)
+        HStack {
+          clippingLabel(
+            language.shadowClipping,
+            count: histogram.shadowClippingCount
+          )
+          clippingLabel(
+            language.highlightClipping,
+            count: histogram.highlightClippingCount
+          )
+        }
+      }
+
+      GroupBox(language.adjustmentPreset) {
+        VStack(alignment: .leading, spacing: 8) {
+          Picker(language.adjustmentPreset, selection: $selectedPresetID) {
+            Text(language.custom).tag("")
+            ForEach(presets) { preset in
+              Text(preset.name).tag(preset.id)
+            }
+          }
+          .onChange(of: selectedPresetID) { _, id in
+            guard let preset = presets.first(where: { $0.id == id }) else {
+              return
+            }
+            settings = preset.settings
+          }
+          HStack {
+            TextField(language.presetName, text: $presetName)
+            Button(language.savePreset, action: onSavePreset)
+              .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
+          }
+        }
+      }
+
+      GroupBox(language.basicAdjustments) {
+        VStack(alignment: .leading, spacing: 10) {
+          slider(language.adjustExposure, value: $settings.exposure, range: -2...2)
+          slider(language.adjustContrast, value: $settings.contrast, range: -0.5...0.5)
+          slider(language.adjustSaturation, value: $settings.saturation, range: -1...1)
+          slider(language.adjustWarmth, value: $settings.warmth, range: -1...1)
+          slider(language.adjustTint, value: $settings.tint, range: -1...1)
+          slider(language.adjustHighlights, value: $settings.highlights, range: -1...1)
+          slider(language.adjustShadows, value: $settings.shadows, range: -1...1)
+          slider(language.adjustClarity, value: $settings.clarity, range: -1...1)
+          slider(language.adjustVibrance, value: $settings.vibrance, range: -1...1)
+          slider(language.adjustSharpness, value: $settings.sharpness, range: 0...1)
+          slider(language.adjustNoiseReduction, value: $settings.noiseReduction, range: 0...1)
+          slider(language.adjustVignette, value: $settings.vignette, range: 0...1)
+        }
+      }
+
+      GroupBox(language.levels) {
+        VStack(alignment: .leading, spacing: 10) {
+          channelPicker(selection: $levelChannel)
+          slider(
+            language.blackPoint,
+            value: levelBinding(\.blackPoint),
+            range: 0...0.95
+          )
+          slider(
+            language.whitePoint,
+            value: levelBinding(\.whitePoint),
+            range: 0.05...1
+          )
+          slider(
+            language.gamma,
+            value: levelBinding(\.gamma),
+            range: 0.1...3
+          )
+        }
+      }
+
+      GroupBox(language.curves) {
+        VStack(alignment: .leading, spacing: 10) {
+          channelPicker(selection: $curveChannel)
+          CurveEditor(curve: curveBinding)
+            .frame(height: 170)
+        }
+      }
+
+      GroupBox(language.colorMixer) {
+        VStack(alignment: .leading, spacing: 10) {
+          Picker(language.colorBand, selection: $colorBand) {
+            ForEach(HSLColorBand.allCases, id: \.self) {
+              Text($0.rawValue.capitalized).tag($0)
+            }
+          }
+          slider(language.hue, value: colorBandBinding(\.hue), range: -1...1)
+          slider(
+            language.adjustSaturation,
+            value: colorBandBinding(\.saturation),
+            range: -1...1
+          )
+          slider(
+            language.luminance,
+            value: colorBandBinding(\.luminance),
+            range: -1...1
+          )
+        }
+      }
+    }
+  }
+
+  private func clippingLabel(_ title: String, count: Int) -> some View {
+    Label("\(title): \(count)", systemImage: count > 0 ? "exclamationmark.triangle" : "checkmark")
+      .font(.caption2)
+      .foregroundStyle(count > 0 ? Color.orange : Color.secondary)
+  }
+
+  private func channelPicker(
+    selection: Binding<ImageColorChannel>
+  ) -> some View {
+    Picker(language.channel, selection: selection) {
+      ForEach(ImageColorChannel.allCases, id: \.self) {
+        Text($0.rawValue.uppercased()).tag($0)
+      }
+    }
+    .pickerStyle(.segmented)
+  }
+
+  private func slider(
+    _ title: String,
+    value: Binding<Double>,
+    range: ClosedRange<Double>
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 3) {
+      HStack {
+        Text(title)
+          .font(.caption)
+        Spacer()
+        Text(value.wrappedValue.formatted(.number.precision(.fractionLength(2))))
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(.secondary)
+      }
+      Slider(value: value, in: range)
+    }
+  }
+
+  private func levelBinding(
+    _ keyPath: WritableKeyPath<ImageLevels, Double>
+  ) -> Binding<Double> {
+    Binding(
+      get: {
+        (settings.levels[levelChannel] ?? .neutral)[keyPath: keyPath]
+      },
+      set: { value in
+        var levels = settings.levels[levelChannel] ?? .neutral
+        levels[keyPath: keyPath] = value
+        settings.levels[levelChannel] = ImageLevels(
+          blackPoint: levels.blackPoint,
+          whitePoint: levels.whitePoint,
+          gamma: levels.gamma
+        )
+      }
+    )
+  }
+
+  private var curveBinding: Binding<ToneCurve> {
+    Binding(
+      get: { settings.curves[curveChannel] ?? .identity },
+      set: { settings.curves[curveChannel] = $0 }
+    )
+  }
+
+  private func colorBandBinding(
+    _ keyPath: WritableKeyPath<HSLBandAdjustment, Double>
+  ) -> Binding<Double> {
+    Binding(
+      get: {
+        (settings.colorBands[colorBand] ?? .neutral)[keyPath: keyPath]
+      },
+      set: { value in
+        var adjustment = settings.colorBands[colorBand] ?? .neutral
+        adjustment[keyPath: keyPath] = value
+        settings.colorBands[colorBand] = HSLBandAdjustment(
+          hue: adjustment.hue,
+          saturation: adjustment.saturation,
+          luminance: adjustment.luminance
+        )
+      }
+    )
+  }
+}
+
+private struct HistogramView: View {
+  let histogram: ImageHistogram
+
+  var body: some View {
+    Canvas { context, size in
+      draw(histogram.red.bins, color: .red, context: &context, size: size)
+      draw(histogram.green.bins, color: .green, context: &context, size: size)
+      draw(histogram.blue.bins, color: .blue, context: &context, size: size)
+      draw(
+        histogram.luminance.bins,
+        color: .primary.opacity(0.8),
+        context: &context,
+        size: size
+      )
+    }
+    .frame(height: 110)
+    .padding(8)
+    .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    .accessibilityLabel("RGB and luminance histogram")
+  }
+
+  private func draw(
+    _ bins: [Int],
+    color: Color,
+    context: inout GraphicsContext,
+    size: CGSize
+  ) {
+    let maximum = max(1, bins.max() ?? 1)
+    var path = Path()
+    for (index, count) in bins.enumerated() {
+      let x = CGFloat(index) / 255 * size.width
+      let y = size.height - CGFloat(count) / CGFloat(maximum) * size.height
+      if index == 0 {
+        path.move(to: CGPoint(x: x, y: y))
+      } else {
+        path.addLine(to: CGPoint(x: x, y: y))
+      }
+    }
+    context.stroke(path, with: .color(color), lineWidth: 1)
+  }
+}
+
+private struct CurveEditor: View {
+  @Binding var curve: ToneCurve
+  @State private var activeIndex: Int?
+
+  var body: some View {
+    GeometryReader { proxy in
+      ZStack {
+        Canvas { context, size in
+          var grid = Path()
+          for fraction in [0.25, 0.5, 0.75] {
+            grid.move(to: CGPoint(x: size.width * fraction, y: 0))
+            grid.addLine(to: CGPoint(x: size.width * fraction, y: size.height))
+            grid.move(to: CGPoint(x: 0, y: size.height * fraction))
+            grid.addLine(to: CGPoint(x: size.width, y: size.height * fraction))
+          }
+          context.stroke(grid, with: .color(.secondary.opacity(0.25)))
+
+          var path = Path()
+          for xIndex in 0...128 {
+            let x = Double(xIndex) / 128
+            let point = CGPoint(
+              x: x * size.width,
+              y: (1 - curve.value(at: x)) * size.height
+            )
+            if xIndex == 0 {
+              path.move(to: point)
+            } else {
+              path.addLine(to: point)
+            }
+          }
+          context.stroke(path, with: .color(.accentColor), lineWidth: 2)
+        }
+        ForEach(Array(curve.points.enumerated()), id: \.offset) { _, point in
+          Circle()
+            .fill(Color.accentColor)
+            .overlay(Circle().stroke(.white, lineWidth: 1))
+            .frame(width: 12, height: 12)
+            .position(
+              x: point.x * proxy.size.width,
+              y: (1 - point.y) * proxy.size.height
+            )
+        }
+        Color.clear
+          .contentShape(Rectangle())
+          .gesture(curveGesture(size: proxy.size))
+      }
+    }
+    .background(.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+  }
+
+  private func curveGesture(size: CGSize) -> some Gesture {
+    DragGesture(minimumDistance: 0)
+      .onChanged { value in
+        let point = ToneCurvePoint(
+          x: Double(min(max(value.location.x / max(size.width, 1), 0), 1)),
+          y: Double(1 - min(max(value.location.y / max(size.height, 1), 0), 1))
+        )
+        var points = curve.points
+        if activeIndex == nil {
+          activeIndex = nearestPointIndex(to: point, in: points)
+          if activeIndex == nil, points.count < 8 {
+            points.append(point)
+            points.sort { $0.x < $1.x }
+            activeIndex = points.firstIndex(of: point)
+          }
+        }
+        guard let activeIndex, points.indices.contains(activeIndex) else {
+          return
+        }
+        let isEndpoint = activeIndex == 0 || activeIndex == points.count - 1
+        points[activeIndex] = ToneCurvePoint(
+          x: isEndpoint ? points[activeIndex].x : point.x,
+          y: point.y
+        )
+        curve = ToneCurve(points: points)
+      }
+      .onEnded { _ in activeIndex = nil }
+  }
+
+  private func nearestPointIndex(
+    to point: ToneCurvePoint,
+    in points: [ToneCurvePoint]
+  ) -> Int? {
+    points.enumerated()
+      .map { index, candidate in
+        (
+          index,
+          hypot(candidate.x - point.x, candidate.y - point.y)
+        )
+      }
+      .filter { $0.1 < 0.12 }
+      .min { $0.1 < $1.1 }?
+      .0
+  }
+}

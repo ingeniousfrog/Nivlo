@@ -6,12 +6,25 @@ struct NivloApp: App {
   @NSApplicationDelegateAdaptor(NivloAppDelegate.self)
   private var appDelegate
 
+  private var isUISmoke: Bool {
+    CommandLine.arguments.contains("--ui-smoke")
+  }
+
   var body: some Scene {
     WindowGroup("Nivlo") {
-      ContentView()
-        .frame(minWidth: 900, minHeight: 620)
+      Group {
+        if isUISmoke {
+          EditorSmokeView()
+        } else {
+          ContentView()
+        }
+      }
+      .frame(minWidth: 900, minHeight: 620)
     }
-    .defaultSize(width: 1100, height: 720)
+    .defaultSize(
+      width: isUISmoke ? 1_400 : 1_100,
+      height: isUISmoke ? 900 : 720
+    )
 
     Settings {
       AISettingsView()
@@ -34,12 +47,22 @@ private final class NivloAppDelegate: NSObject, NSApplicationDelegate {
 
   @MainActor
   private func ensureVisibleMainWindow() {
-    if NSApp.windows.contains(where: { $0.isVisible }) {
+    if let window = NSApp.windows.first(where: { $0.isVisible }) {
+      if CommandLine.arguments.contains("--ui-smoke") {
+        window.setContentSize(NSSize(width: 1_400, height: 900))
+        window.center()
+      }
       return
     }
 
+    let isUISmoke = CommandLine.arguments.contains("--ui-smoke")
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+      contentRect: NSRect(
+        x: 0,
+        y: 0,
+        width: isUISmoke ? 1_400 : 1_100,
+        height: isUISmoke ? 900 : 720
+      ),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered,
       defer: false

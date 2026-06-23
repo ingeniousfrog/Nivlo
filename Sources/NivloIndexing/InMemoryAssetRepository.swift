@@ -3,13 +3,15 @@ import NivloDomain
 
 public actor InMemoryAssetRepository:
   AssetRepository, AssetEnrichmentRepository, LibraryRootRepository,
-  ProcessingHistoryRepository
+  ProcessingHistoryRepository, IndexMaintenanceRepository
 {
   private var storedAssets: [AssetID: ImageAsset]
   private var hiddenRecords: [String: HiddenAssetRecord] = [:]
   private var storedEnrichments: [AssetID: AssetEnrichment] = [:]
   private var storedRoots: [UUID: LibraryRoot] = [:]
   private var storedProcessingHistory: [AssetID: [ProcessingHistoryRecord]] = [:]
+  private var storedHealth = IndexHealthRecord()
+  private var storedEnrichmentFailures: [AssetID: EnrichmentFailureRecord] = [:]
 
   public init(assets: [ImageAsset] = []) {
     storedAssets = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
@@ -148,6 +150,56 @@ public actor InMemoryAssetRepository:
   public func processingHistory(for assetID: AssetID) -> [ProcessingHistoryRecord] {
     storedProcessingHistory[assetID, default: []]
       .sorted { $0.createdAt < $1.createdAt }
+  }
+
+  public func indexHealth() -> IndexHealthRecord {
+    storedHealth
+  }
+
+  public func recordSuccessfulScan(at date: Date) {
+    storedHealth = IndexHealthRecord(
+      lastSuccessfulScanAt: date,
+      lastSuccessfulEnrichmentAt: storedHealth.lastSuccessfulEnrichmentAt,
+      lastErrorMessage: nil
+    )
+  }
+
+  public func recordIndexError(_ message: String?) {
+    storedHealth = IndexHealthRecord(
+      lastSuccessfulScanAt: storedHealth.lastSuccessfulScanAt,
+      lastSuccessfulEnrichmentAt: storedHealth.lastSuccessfulEnrichmentAt,
+      lastErrorMessage: message
+    )
+  }
+
+  public func enrichmentFailures() -> [EnrichmentFailureRecord] {
+    storedEnrichmentFailures.values.sorted {
+      $0.failedAt > $1.failedAt
+    }
+  }
+
+  public func replaceEnrichmentFailures(
+    _ failures: [EnrichmentFailureRecord]
+  ) {
+    storedEnrichmentFailures = Dictionary(
+      uniqueKeysWithValues: failures.map { ($0.assetID, $0) }
+    )
+  }
+
+  public func removeEnrichments(for assetIDs: Set<AssetID>) {
+    storedEnrichments = storedEnrichments.filter {
+      !assetIDs.contains($0.key)
+    }
+  }
+
+  public func removeAllEnrichments() {
+    storedEnrichments.removeAll()
+  }
+
+  public func rebuildSearchIndex() {}
+
+  public func integrityCheck() -> String {
+    "ok"
   }
 
   private func invalidateChangedEnrichments(

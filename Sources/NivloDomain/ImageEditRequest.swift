@@ -63,20 +63,136 @@ public struct ImageAdjustmentSettings: Equatable, Sendable, Codable {
   public var contrast: Double
   public var saturation: Double
   public var warmth: Double
+  public var tint: Double
+  public var highlights: Double
+  public var shadows: Double
+  public var clarity: Double
+  public var vibrance: Double
+  public var sharpness: Double
+  public var noiseReduction: Double
+  public var vignette: Double
+  public var levels: [ImageColorChannel: ImageLevels]
+  public var curves: [ImageColorChannel: ToneCurve]
+  public var colorBands: [HSLColorBand: HSLBandAdjustment]
 
   public init(
     exposure: Double = 0,
     contrast: Double = 0,
     saturation: Double = 0,
-    warmth: Double = 0
+    warmth: Double = 0,
+    tint: Double = 0,
+    highlights: Double = 0,
+    shadows: Double = 0,
+    clarity: Double = 0,
+    vibrance: Double = 0,
+    sharpness: Double = 0,
+    noiseReduction: Double = 0,
+    vignette: Double = 0,
+    levels: [ImageColorChannel: ImageLevels] = [:],
+    curves: [ImageColorChannel: ToneCurve] = [:],
+    colorBands: [HSLColorBand: HSLBandAdjustment] = [:]
   ) {
     self.exposure = exposure
     self.contrast = contrast
     self.saturation = saturation
     self.warmth = warmth
+    self.tint = tint
+    self.highlights = highlights
+    self.shadows = shadows
+    self.clarity = clarity
+    self.vibrance = vibrance
+    self.sharpness = sharpness
+    self.noiseReduction = noiseReduction
+    self.vignette = vignette
+    self.levels = levels
+    self.curves = curves
+    self.colorBands = colorBands
   }
 
   public static let neutral = ImageAdjustmentSettings()
+
+  public var blackPoint: Double {
+    get { levels[.rgb]?.blackPoint ?? 0 }
+    set {
+      let current = levels[.rgb] ?? .neutral
+      levels[.rgb] = ImageLevels(
+        blackPoint: newValue,
+        whitePoint: current.whitePoint,
+        gamma: current.gamma
+      )
+    }
+  }
+
+  public var whitePoint: Double {
+    get { levels[.rgb]?.whitePoint ?? 1 }
+    set {
+      let current = levels[.rgb] ?? .neutral
+      levels[.rgb] = ImageLevels(
+        blackPoint: current.blackPoint,
+        whitePoint: newValue,
+        gamma: current.gamma
+      )
+    }
+  }
+
+  public var gamma: Double {
+    get { levels[.rgb]?.gamma ?? 1 }
+    set {
+      let current = levels[.rgb] ?? .neutral
+      levels[.rgb] = ImageLevels(
+        blackPoint: current.blackPoint,
+        whitePoint: current.whitePoint,
+        gamma: newValue
+      )
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case exposure
+    case contrast
+    case saturation
+    case warmth
+    case tint
+    case highlights
+    case shadows
+    case clarity
+    case vibrance
+    case sharpness
+    case noiseReduction
+    case vignette
+    case levels
+    case curves
+    case colorBands
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      exposure: try container.decodeIfPresent(Double.self, forKey: .exposure) ?? 0,
+      contrast: try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 0,
+      saturation: try container.decodeIfPresent(Double.self, forKey: .saturation) ?? 0,
+      warmth: try container.decodeIfPresent(Double.self, forKey: .warmth) ?? 0,
+      tint: try container.decodeIfPresent(Double.self, forKey: .tint) ?? 0,
+      highlights: try container.decodeIfPresent(Double.self, forKey: .highlights) ?? 0,
+      shadows: try container.decodeIfPresent(Double.self, forKey: .shadows) ?? 0,
+      clarity: try container.decodeIfPresent(Double.self, forKey: .clarity) ?? 0,
+      vibrance: try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0,
+      sharpness: try container.decodeIfPresent(Double.self, forKey: .sharpness) ?? 0,
+      noiseReduction: try container.decodeIfPresent(Double.self, forKey: .noiseReduction) ?? 0,
+      vignette: try container.decodeIfPresent(Double.self, forKey: .vignette) ?? 0,
+      levels:
+        try container.decodeIfPresent([ImageColorChannel: ImageLevels].self, forKey: .levels)
+        ?? [:],
+      curves:
+        try container.decodeIfPresent([ImageColorChannel: ToneCurve].self, forKey: .curves)
+        ?? [:],
+      colorBands:
+        try container.decodeIfPresent(
+          [HSLColorBand: HSLBandAdjustment].self,
+          forKey: .colorBands
+        ) ?? [:]
+    )
+  }
 }
 
 public enum ImageAnnotationKind: String, Codable, Sendable, Equatable {
@@ -297,6 +413,7 @@ public struct MaskStroke: Identifiable, Equatable, Sendable, Codable {
 public enum EditorLayerKind: String, Codable, Sendable, Equatable {
   case background
   case adjustments
+  case localAdjustments
   case annotations
   case mask
 }
@@ -315,8 +432,9 @@ public struct EditorLayer: Identifiable, Equatable, Sendable, Codable {
   public static let defaults: [EditorLayer] = [
     EditorLayer(kind: .background),
     EditorLayer(kind: .adjustments),
-    EditorLayer(kind: .annotations),
+    EditorLayer(kind: .localAdjustments),
     EditorLayer(kind: .mask),
+    EditorLayer(kind: .annotations),
   ]
 }
 
@@ -398,13 +516,14 @@ public struct ImageAnnotation: Identifiable, Equatable, Sendable, Codable {
   }
 }
 
-public struct ImageEditSnapshot: Sendable, Equatable {
+public struct ImageEditSnapshot: Sendable, Equatable, Codable {
   public var cropRect: NormalizedCropRect
   public var quarterTurns: Int
   public var flippedHorizontally: Bool
   public var adjustments: ImageAdjustmentSettings
   public var annotations: [ImageAnnotation]
   public var maskStrokes: [MaskStroke]
+  public var localAdjustments: [LocalImageAdjustment]
   public var layers: [EditorLayer]
 
   public init(
@@ -414,6 +533,7 @@ public struct ImageEditSnapshot: Sendable, Equatable {
     adjustments: ImageAdjustmentSettings = .neutral,
     annotations: [ImageAnnotation] = [],
     maskStrokes: [MaskStroke] = [],
+    localAdjustments: [LocalImageAdjustment] = [],
     layers: [EditorLayer] = EditorLayer.defaults
   ) {
     self.cropRect = cropRect
@@ -422,7 +542,44 @@ public struct ImageEditSnapshot: Sendable, Equatable {
     self.adjustments = adjustments
     self.annotations = annotations
     self.maskStrokes = maskStrokes
+    self.localAdjustments = localAdjustments
     self.layers = layers
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case cropRect
+    case quarterTurns
+    case flippedHorizontally
+    case adjustments
+    case annotations
+    case maskStrokes
+    case localAdjustments
+    case layers
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      cropRect: try container.decodeIfPresent(NormalizedCropRect.self, forKey: .cropRect) ?? .full,
+      quarterTurns: try container.decodeIfPresent(Int.self, forKey: .quarterTurns) ?? 0,
+      flippedHorizontally:
+        try container.decodeIfPresent(Bool.self, forKey: .flippedHorizontally) ?? false,
+      adjustments:
+        try container.decodeIfPresent(ImageAdjustmentSettings.self, forKey: .adjustments)
+        ?? .neutral,
+      annotations:
+        try container.decodeIfPresent([ImageAnnotation].self, forKey: .annotations) ?? [],
+      maskStrokes:
+        try container.decodeIfPresent([MaskStroke].self, forKey: .maskStrokes) ?? [],
+      localAdjustments:
+        try container.decodeIfPresent(
+          [LocalImageAdjustment].self,
+          forKey: .localAdjustments
+        ) ?? [],
+      layers:
+        try container.decodeIfPresent([EditorLayer].self, forKey: .layers)
+        ?? EditorLayer.defaults
+    )
   }
 }
 
@@ -435,6 +592,7 @@ public struct ImageEditRequest: Sendable, Equatable {
   public var adjustments: ImageAdjustmentSettings
   public var annotations: [ImageAnnotation]
   public var maskStrokes: [MaskStroke]
+  public var localAdjustments: [LocalImageAdjustment]
   public var layers: [EditorLayer]
   public var format: PicxOutputFormat
   public var quality: Int
@@ -452,6 +610,7 @@ public struct ImageEditRequest: Sendable, Equatable {
     adjustments: ImageAdjustmentSettings = .neutral,
     annotations: [ImageAnnotation] = [],
     maskStrokes: [MaskStroke] = [],
+    localAdjustments: [LocalImageAdjustment] = [],
     layers: [EditorLayer] = EditorLayer.defaults,
     format: PicxOutputFormat = .webp,
     quality: Int = 82,
@@ -468,6 +627,7 @@ public struct ImageEditRequest: Sendable, Equatable {
     self.adjustments = adjustments
     self.annotations = annotations
     self.maskStrokes = maskStrokes
+    self.localAdjustments = localAdjustments
     self.layers = layers
     self.format = format
     self.quality = quality

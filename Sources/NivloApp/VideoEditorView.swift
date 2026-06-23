@@ -43,10 +43,8 @@ struct VideoEditorView: View {
   @State private var durationSeconds = 0.0
   @State private var startSeconds = 0.0
   @State private var endSeconds = 0.0
-  @State private var cropX = ""
-  @State private var cropY = ""
-  @State private var cropWidth = ""
-  @State private var cropHeight = ""
+  @State private var currentSeconds = 0.0
+  @State private var normalizedCrop = NormalizedCropRect.full
   @State private var scaleWidth = ""
   @State private var scaleHeight = ""
   @State private var transposeQuarterTurns = 0
@@ -55,6 +53,16 @@ struct VideoEditorView: View {
   @State private var outputFormat: VideoOutputFormat = .mp4
   @State private var extractAudioOnly = false
   @State private var audioFormat: VideoAudioExportFormat = .m4a
+  @State private var volume = 1.0
+  @State private var fadeInSeconds = 0.0
+  @State private var fadeOutSeconds = 0.0
+  @State private var selectedPresetID = "h264-balanced"
+  @State private var useHardwareEncoding = true
+  @State private var capabilities = FFmpegCapabilities(videoEncoders: [])
+  @State private var timelineThumbnails: [VideoTimelineThumbnail] = []
+  @State private var waveform: [Double] = []
+  @State private var timeObserverToken: Any?
+  @State private var sessionSaveTask: Task<Void, Never>?
   @State private var exportProgress: Double?
   @State private var isLoading = true
   @State private var isExporting = false
@@ -63,6 +71,9 @@ struct VideoEditorView: View {
 
   private let ffprobe = FFprobeService()
   private let ffmpeg = FFmpegProcessor()
+  private let timelineAnalyzer = VideoTimelineAnalyzer()
+  private let capabilityDetector = FFmpegCapabilityDetector()
+  private let sessionStore = EditSessionStoreProvider.shared
   private let sidebarWidth: CGFloat = 200
   private let inspectorWidth: CGFloat = 340
 
@@ -99,8 +110,17 @@ struct VideoEditorView: View {
       await loadVideo()
     }
     .onDisappear {
+      removeTimeObserver()
       player?.pause()
       player = nil
+      sessionSaveTask?.cancel()
+      saveVideoSessionImmediately()
+    }
+    .onChange(of: videoSession) { _, session in
+      scheduleSessionSave(session)
+    }
+    .onChange(of: volume) { _, value in
+      player?.volume = Float(value)
     }
   }
 
@@ -130,7 +150,9 @@ struct VideoEditorView: View {
       }
       .buttonStyle(.borderedProminent)
       .disabled(isLoading || isExporting || durationSeconds <= 0 || !toolsReady)
-      Button { dismiss() } label: {
+      Button {
+        dismiss()
+      } label: {
         Image(systemName: "xmark")
       }
       .buttonStyle(.bordered)
@@ -153,17 +175,56 @@ struct VideoEditorView: View {
   }
 
   private var videoPreview: some View {
-    ZStack {
-      Color.black
-      if let player {
-        VideoPlayer(player: player)
-          .padding(16)
-      } else if isLoading {
-        ProgressView().controlSize(.large)
-      } else {
-        ContentUnavailableView(language.videoPreviewUnavailable, systemImage: "film.stack")
+    VStack(spacing: 10) {
+      ZStack {
+        Color.black
+        if let player {
+          GeometryReader { proxy in
+            ZStack {
+              VideoPlayer(player: player)
+                .padding(16)
+              if selectedTab == .transform, let probeInfo {
+                let layout = EditorImageLayout(
+                  imageSize: CGSize(
+                    width: max(probeInfo.width, 1),
+                    height: max(probeInfo.height, 1)
+                  ),
+                  containerSize: CGSize(
+                    width: max(0, proxy.size.width - 32),
+                    height: max(0, proxy.size.height - 32)
+                  )
+                )
+                InteractiveCropOverlay(cropRect: $normalizedCrop)
+                  .frame(
+                    width: layout.contentRect.width,
+                    height: layout.contentRect.height
+                  )
+                  .position(
+                    x: proxy.size.width / 2,
+                    y: proxy.size.height / 2
+                  )
+              }
+            }
+          }
+        } else if isLoading {
+          ProgressView().controlSize(.large)
+        } else {
+          ContentUnavailableView(language.videoPreviewUnavailable, systemImage: "film.stack")
+        }
       }
+      VideoTimelineView(
+        thumbnails: timelineThumbnails,
+        waveform: waveform,
+        durationSeconds: durationSeconds,
+        currentSeconds: currentSeconds,
+        startSeconds: startSeconds,
+        endSeconds: endSeconds,
+        onSeek: seek
+      )
+      .padding(.horizontal, 16)
+      .padding(.bottom, 12)
     }
+    .background(Color.black)
   }
 
   private var inspector: some View {
@@ -260,32 +321,64 @@ struct VideoEditorView: View {
           .monospacedDigit()
           .font(.caption)
       }
+      HStack {
+        Text("\(language.playhead): \(formatTime(currentSeconds))")
+          .font(.caption.monospacedDigit())
+        Spacer()
+        Button {
+          stepFrame(-1)
+        } label: {
+          Image(systemName: "backward.frame")
+        }
+        .help(language.previousFrame)
+        Button {
+          stepFrame(1)
+        } label: {
+          Image(systemName: "forward.frame")
+        }
+        .help(language.nextFrame)
+      }
       sliderRow(language.trimStart, value: $startSeconds, range: 0...max(0.1, endSeconds - 0.1))
       sliderRow(
         language.trimEnd,
         value: $endSeconds,
         range: min(durationSeconds, startSeconds + 0.1)...max(durationSeconds, startSeconds + 0.1)
       )
+      HStack {
+        Button(language.setTrimStart) {
+          startSeconds = min(currentSeconds, endSeconds - 0.1)
+        }
+        Button(language.setTrimEnd) {
+          endSeconds = max(currentSeconds, startSeconds + 0.1)
+        }
+      }
     }
   }
 
   private var transformControls: some View {
     VStack(alignment: .leading, spacing: 12) {
       if let probe = probeInfo {
-        Text("\(language.dimensions): \(probe.width)×\(probe.height) · \(String(format: "%.2f", probe.frameRate)) fps")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          "\(language.dimensions): \(probe.width)×\(probe.height) · \(String(format: "%.2f", probe.frameRate)) fps"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
       Group {
-        TextField(language.cropX, text: $cropX)
-        TextField(language.cropY, text: $cropY)
-        TextField(language.cropWidth, text: $cropWidth)
-        TextField(language.cropHeight, text: $cropHeight)
+        Text(
+          "\(language.cropSizeLabel): \(Int(normalizedCrop.width * 100))% × \(Int(normalizedCrop.height * 100))%"
+        )
+        .font(.caption.monospacedDigit())
+        Button(language.resetCrop) {
+          normalizedCrop = .full
+        }
         TextField(language.scaleWidth, text: $scaleWidth)
         TextField(language.scaleHeight, text: $scaleHeight)
         TextField(language.outputFPS, text: $outputFPS)
       }
-      Stepper("\(language.rotateVideo): \(transposeQuarterTurns)", value: $transposeQuarterTurns, in: 0...3)
+      Stepper(
+        "\(language.rotateVideo): \(transposeQuarterTurns)", value: $transposeQuarterTurns,
+        in: 0...3)
     }
   }
 
@@ -304,6 +397,23 @@ struct VideoEditorView: View {
           }
         }
       } else {
+        Picker(language.videoPreset, selection: $selectedPresetID) {
+          ForEach(VideoExportPreset.builtIn) { preset in
+            Text(preset.name).tag(preset.id)
+          }
+        }
+        .onChange(of: selectedPresetID) { _, _ in
+          applySelectedPreset()
+        }
+        Toggle(language.hardwareEncoding, isOn: $useHardwareEncoding)
+          .disabled(selectedPreset?.hardwareCodec == nil)
+        if let selectedPreset {
+          Text(
+            "\(language.detectedCodec): \(selectedCodec(for: selectedPreset))"
+          )
+          .font(.caption.monospaced())
+          .foregroundStyle(.secondary)
+        }
         Picker(language.exportFormat, selection: $outputFormat) {
           ForEach(VideoOutputFormat.allCases, id: \.self) { format in
             Text(format.rawValue.uppercased()).tag(format)
@@ -313,6 +423,26 @@ struct VideoEditorView: View {
           Text("\(language.videoCRF): \(Int(crf))")
         }
       }
+
+      Divider()
+      sliderRow(
+        language.volume,
+        value: $volume,
+        range: 0...2,
+        formatsAsTime: false
+      )
+      sliderRow(
+        language.fadeIn,
+        value: $fadeInSeconds,
+        range: 0...max(0.1, min(10, trimRange.endSeconds - trimRange.startSeconds)),
+        formatsAsTime: true
+      )
+      sliderRow(
+        language.fadeOut,
+        value: $fadeOutSeconds,
+        range: 0...max(0.1, min(10, trimRange.endSeconds - trimRange.startSeconds)),
+        formatsAsTime: true
+      )
 
       Button {
         exportEditedCopy()
@@ -324,17 +454,43 @@ struct VideoEditorView: View {
     }
   }
 
-  private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+  private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>)
+    -> some View
+  {
+    sliderRow(title, value: value, range: range, formatsAsTime: true)
+  }
+
+  private func sliderRow(
+    _ title: String,
+    value: Binding<Double>,
+    range: ClosedRange<Double>,
+    formatsAsTime: Bool
+  ) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text(title)
           .font(.caption)
         Spacer()
-        Text(formatTime(value.wrappedValue))
-          .monospacedDigit()
-          .font(.caption)
+        Text(
+          formatsAsTime
+            ? formatTime(value.wrappedValue)
+            : value.wrappedValue.formatted(.number.precision(.fractionLength(2)))
+        )
+        .monospacedDigit()
+        .font(.caption)
       }
-      Slider(value: value, in: range, onEditingChanged: seekWhenFinished)
+      Slider(
+        value: Binding(
+          get: { value.wrappedValue },
+          set: { newValue in
+            value.wrappedValue = newValue
+            if formatsAsTime {
+              seek(newValue)
+            }
+          }
+        ),
+        in: range
+      )
     }
   }
 
@@ -346,10 +502,8 @@ struct VideoEditorView: View {
       if let probe = try? await ffprobe.probe(sourceURL: asset.url) {
         probeInfo = probe
         durationSeconds = probe.durationSeconds
-        cropWidth = probe.width > 0 ? String(probe.width) : ""
-        cropHeight = probe.height > 0 ? String(probe.height) : ""
-        scaleWidth = cropWidth
-        scaleHeight = cropHeight
+        scaleWidth = probe.width > 0 ? String(probe.width) : ""
+        scaleHeight = probe.height > 0 ? String(probe.height) : ""
         outputFPS = probe.frameRate > 0 ? String(format: "%.2f", probe.frameRate) : ""
       } else {
         let duration = try await avAsset.load(.duration)
@@ -361,16 +515,37 @@ struct VideoEditorView: View {
       startSeconds = 0
       endSeconds = durationSeconds
       player = AVPlayer(playerItem: AVPlayerItem(asset: avAsset))
+      player?.volume = Float(volume)
+      installTimeObserver()
+      await restoreVideoSession()
+      async let thumbnails = timelineAnalyzer.thumbnails(
+        sourceURL: asset.url,
+        count: 12
+      )
+      async let audioWaveform = timelineAnalyzer.waveformAsync(
+        sourceURL: asset.url,
+        sampleCount: 256
+      )
+      timelineThumbnails = (try? await thumbnails) ?? []
+      waveform = (try? await audioWaveform) ?? []
+      capabilities =
+        (try? await capabilityDetector.detect())
+        ?? FFmpegCapabilities(videoEncoders: [])
+      applySelectedPreset()
     } catch {
       message = "\(language.videoPreviewUnavailable): \(error.localizedDescription)"
     }
     isLoading = false
   }
 
-  private func seekWhenFinished(_ isEditing: Bool) {
-    guard !isEditing else { return }
-    let target = min(max(startSeconds, 0), durationSeconds)
-    player?.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+  private func seek(_ seconds: Double) {
+    let target = min(max(seconds, 0), durationSeconds)
+    currentSeconds = target
+    player?.seek(
+      to: CMTime(seconds: target, preferredTimescale: 600),
+      toleranceBefore: .zero,
+      toleranceAfter: .zero
+    )
   }
 
   private func exportEditedCopy() {
@@ -379,7 +554,8 @@ struct VideoEditorView: View {
     let suffix = extractAudioOnly ? audioFormat.rawValue : outputFormat.rawValue
     panel.nameFieldStringValue =
       "\(asset.url.deletingPathExtension().lastPathComponent)-\(extractAudioOnly ? "audio" : "edited").\(suffix)"
-    panel.allowedContentTypes = extractAudioOnly
+    panel.allowedContentTypes =
+      extractAudioOnly
       ? [UTType(filenameExtension: audioFormat.rawValue) ?? .audio]
       : [UTType(filenameExtension: outputFormat.rawValue) ?? .mpeg4Movie]
     guard panel.runModal() == .OK, let outputURL = panel.url else { return }
@@ -412,16 +588,20 @@ struct VideoEditorView: View {
 
   private func buildRequest(outputURL: URL) -> VideoEditRequest {
     let cropRect: VideoCropRect?
-    if let width = Int(cropWidth), let height = Int(cropHeight), width > 0, height > 0 {
+    if !normalizedCrop.isEffectivelyFull,
+      let probeInfo,
+      probeInfo.width > 0,
+      probeInfo.height > 0
+    {
       cropRect = VideoCropRect(
-        x: Int(cropX) ?? 0,
-        y: Int(cropY) ?? 0,
-        width: width,
-        height: height
+        normalized: normalizedCrop,
+        sourceWidth: probeInfo.width,
+        sourceHeight: probeInfo.height
       )
     } else {
       cropRect = nil
     }
+    let preset = selectedPreset ?? VideoExportPreset.builtIn[0]
     return VideoEditRequest(
       sourceURL: asset.url,
       outputURL: outputURL,
@@ -431,16 +611,125 @@ struct VideoEditorView: View {
       scaleHeight: Int(scaleHeight),
       transposeQuarterTurns: transposeQuarterTurns,
       outputFPS: Double(outputFPS),
+      videoCodec: selectedCodec(for: preset),
       crf: Int(crf),
+      preset: preset.encoderPreset,
       outputFormat: outputFormat,
       extractAudioOnly: extractAudioOnly,
-      audioFormat: audioFormat
+      audioFormat: audioFormat,
+      volume: volume,
+      fadeInSeconds: fadeInSeconds,
+      fadeOutSeconds: fadeOutSeconds
     )
   }
 
   private func formatTime(_ seconds: Double) -> String {
     let totalSeconds = max(0, Int(seconds.rounded()))
     return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+  }
+
+  private var selectedPreset: VideoExportPreset? {
+    VideoExportPreset.builtIn.first { $0.id == selectedPresetID }
+  }
+
+  private func selectedCodec(for preset: VideoExportPreset) -> String {
+    useHardwareEncoding
+      ? capabilities.codec(for: preset)
+      : preset.softwareCodec
+  }
+
+  private func applySelectedPreset() {
+    guard let preset = selectedPreset else { return }
+    outputFormat = preset.outputFormat
+    crf = Double(preset.crf)
+  }
+
+  private func stepFrame(_ direction: Int) {
+    let frameRate = max(probeInfo?.frameRate ?? 30, 1)
+    seek(currentSeconds + Double(direction) / frameRate)
+  }
+
+  private func installTimeObserver() {
+    removeTimeObserver()
+    timeObserverToken = player?.addPeriodicTimeObserver(
+      forInterval: CMTime(value: 1, timescale: 30),
+      queue: .main
+    ) { time in
+      let seconds = time.seconds
+      Task { @MainActor in
+        currentSeconds = min(max(seconds, 0), durationSeconds)
+      }
+    }
+  }
+
+  private func removeTimeObserver() {
+    if let timeObserverToken {
+      player?.removeTimeObserver(timeObserverToken)
+      self.timeObserverToken = nil
+    }
+  }
+
+  private var videoSession: VideoEditSession {
+    VideoEditSession(
+      sourceURL: asset.url,
+      durationSeconds: durationSeconds,
+      startSeconds: startSeconds,
+      endSeconds: endSeconds,
+      normalizedCrop: normalizedCrop,
+      scaleWidth: Int(scaleWidth),
+      scaleHeight: Int(scaleHeight),
+      transposeQuarterTurns: transposeQuarterTurns,
+      outputFPS: Double(outputFPS),
+      volume: volume,
+      fadeInSeconds: fadeInSeconds,
+      fadeOutSeconds: fadeOutSeconds,
+      exportPresetID: selectedPresetID,
+      outputFormat: outputFormat,
+      extractAudioOnly: extractAudioOnly,
+      audioFormat: audioFormat
+    )
+  }
+
+  private func restoreVideoSession() async {
+    guard
+      let sessionStore,
+      let session = try? await sessionStore.videoSession(for: asset.id),
+      session.sourceURL.standardizedFileURL == asset.url.standardizedFileURL
+    else {
+      return
+    }
+    startSeconds = session.startSeconds
+    endSeconds = session.endSeconds
+    normalizedCrop = session.normalizedCrop
+    scaleWidth = session.scaleWidth.map(String.init) ?? scaleWidth
+    scaleHeight = session.scaleHeight.map(String.init) ?? scaleHeight
+    transposeQuarterTurns = session.transposeQuarterTurns
+    outputFPS = session.outputFPS.map { String(format: "%.2f", $0) } ?? outputFPS
+    volume = session.volume
+    fadeInSeconds = session.fadeInSeconds
+    fadeOutSeconds = session.fadeOutSeconds
+    selectedPresetID = session.exportPresetID
+    outputFormat = session.outputFormat
+    extractAudioOnly = session.extractAudioOnly
+    audioFormat = session.audioFormat
+  }
+
+  private func scheduleSessionSave(_ session: VideoEditSession) {
+    guard durationSeconds > 0, let sessionStore else { return }
+    sessionSaveTask?.cancel()
+    sessionSaveTask = Task {
+      try? await Task.sleep(for: .milliseconds(350))
+      guard !Task.isCancelled else { return }
+      try? await sessionStore.saveVideoSession(session, for: asset.id)
+    }
+  }
+
+  private func saveVideoSessionImmediately() {
+    guard durationSeconds > 0, let sessionStore else { return }
+    let session = videoSession
+    Task {
+      try? await sessionStore.saveVideoSession(session, for: asset.id)
+    }
   }
 }
 

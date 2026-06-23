@@ -13,6 +13,7 @@ let package = Package(
     .library(name: "NivloImaging", targets: ["NivloImaging"]),
     .library(name: "NivloPersistence", targets: ["NivloPersistence"]),
     .executable(name: "Nivlo", targets: ["NivloApp"]),
+    .executable(name: "NivloBenchmark", targets: ["NivloBenchmark"]),
   ],
   targets: [
     .target(name: "NivloDomain"),
@@ -24,7 +25,8 @@ let package = Package(
       name: "NivloImaging",
       dependencies: ["NivloDomain"],
       linkerSettings: [
-        .linkedFramework("AppKit")
+        .linkedFramework("AppKit"),
+        .linkedFramework("AVFoundation"),
       ]
     ),
     .target(
@@ -43,6 +45,16 @@ let package = Package(
       linkerSettings: [
         .linkedFramework("AVKit")
       ]
+    ),
+    .executableTarget(
+      name: "NivloBenchmark",
+      dependencies: [
+        "NivloDomain",
+        "NivloImaging",
+        "NivloIndexing",
+        "NivloPersistence",
+      ],
+      linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .testTarget(
       name: "NivloDomainTests",

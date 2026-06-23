@@ -29,6 +29,7 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var dimensions: String { text("Dimensions", "尺寸") }
   var duplicates: String { text("Duplicates", "重复项") }
+  var duplicateGroup: String { text("Duplicate group", "重复组") }
   var edit: String { text("Edit", "编辑") }
   var editHelp: String { text("Open this asset for editing", "打开此素材进行编辑") }
   var emptyLibraryDescription: String {
@@ -91,6 +92,24 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var smartViews: String { text("Smart Views", "智能视图") }
   var status: String { text("Status", "状态") }
   var validateIndex: String { text("Validate Index", "校验索引") }
+  var indexHealth: String { text("Index Health", "索引健康") }
+  var indexedAssets: String { text("Indexed assets", "已索引素材") }
+  var enrichedAssets: String { text("Enriched assets", "已丰富素材") }
+  var failedEnrichments: String { text("Failed enrichments", "丰富索引失败") }
+  var inaccessibleRoots: String { text("Inaccessible folders", "不可访问文件夹") }
+  var lastSuccessfulWork: String { text("Last successful work", "最近成功任务") }
+  var lastScan: String { text("Scan", "扫描") }
+  var lastEnrichment: String { text("Enrichment", "丰富索引") }
+  var lastIndexError: String { text("Last error", "最近错误") }
+  var indexActions: String { text("Repair and control", "修复与控制") }
+  var pause: String { text("Pause", "暂停") }
+  var resume: String { text("Resume", "继续") }
+  var retryFailures: String { text("Retry failures", "重试失败项") }
+  var rescanAll: String { text("Rescan all folders", "重新扫描全部文件夹") }
+  var rebuildSearch: String { text("Rebuild search", "重建搜索索引") }
+  var rebuildRichIndex: String { text("Rebuild rich index", "重建丰富索引") }
+  var verifyIntegrity: String { text("Verify database", "校验数据库") }
+  var never: String { text("Never", "从未") }
   var copyPath: String { text("Copy path", "复制路径") }
   var copied: String { text("Copied", "已复制") }
   var copyFailed: String { text("Copy failed", "复制失败") }
@@ -133,6 +152,43 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var adjustContrast: String { text("Contrast", "对比度") }
   var adjustSaturation: String { text("Saturation", "饱和度") }
   var adjustWarmth: String { text("Warmth", "色温") }
+  var adjustTint: String { text("Tint", "色调") }
+  var adjustHighlights: String { text("Highlights", "高光") }
+  var adjustShadows: String { text("Shadows", "阴影") }
+  var adjustClarity: String { text("Clarity", "清晰度") }
+  var adjustVibrance: String { text("Vibrance", "自然饱和度") }
+  var adjustSharpness: String { text("Sharpen", "锐化") }
+  var adjustNoiseReduction: String { text("Noise reduction", "降噪") }
+  var adjustVignette: String { text("Vignette", "暗角") }
+  var histogram: String { text("Histogram", "直方图") }
+  var shadowClipping: String { text("Shadow clipping", "阴影溢出") }
+  var highlightClipping: String { text("Highlight clipping", "高光溢出") }
+  var basicAdjustments: String { text("Basic", "基础调整") }
+  var levels: String { text("Levels", "色阶") }
+  var curves: String { text("Curves", "曲线") }
+  var blackPoint: String { text("Black point", "黑场") }
+  var whitePoint: String { text("White point", "白场") }
+  var gamma: String { text("Gamma / midtone", "Gamma / 中间调") }
+  var colorMixer: String { text("HSL / HSV color mixer", "HSL / HSV 分色调整") }
+  var colorBand: String { text("Color band", "颜色范围") }
+  var channel: String { text("Channel", "通道") }
+  var hue: String { text("Hue", "色相") }
+  var luminance: String { text("Luminance / value", "明度 / 亮度") }
+  var adjustmentPreset: String { text("Adjustment preset", "调整预设") }
+  var custom: String { text("Custom", "自定义") }
+  var presetName: String { text("Preset name", "预设名称") }
+  var savePreset: String { text("Save", "保存") }
+  var undo: String { text("Undo", "撤销") }
+  var redo: String { text("Redo", "重做") }
+  var before: String { text("Before", "调整前") }
+  var after: String { text("After", "调整后") }
+  var fit: String { text("Fit", "适合窗口") }
+  var actualSize: String { text("100%", "100%") }
+  var layers: String { text("Layers", "图层") }
+  var layerLocalAdjustments: String { text("Local adjustments", "局部调整层") }
+  var addLocalAdjustment: String { text("Use mask for local adjustment", "将蒙版用于局部调整") }
+  var localAdjustment: String { text("Local adjustment", "局部调整") }
+  var renderedPreview: String { text("Rendered Preview", "渲染预览") }
   var addTextAnnotation: String { text("Add text", "添加文字") }
   var addRectangleAnnotation: String { text("Add rectangle", "添加矩形") }
   var addArrowAnnotation: String { text("Add arrow", "添加箭头") }
@@ -277,6 +333,18 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var exportReadyTitle: String { text("Export ready", "导出完成") }
   var openExportedFile: String { text("Open file", "打开文件") }
   var trimRangeLabel: String { text("Trim range", "裁剪范围") }
+  var playhead: String { text("Playhead", "播放头") }
+  var setTrimStart: String { text("Set start", "设为起点") }
+  var setTrimEnd: String { text("Set end", "设为终点") }
+  var previousFrame: String { text("Previous frame", "上一帧") }
+  var nextFrame: String { text("Next frame", "下一帧") }
+  var resetCrop: String { text("Reset crop", "重置裁切") }
+  var videoPreset: String { text("Video preset", "视频预设") }
+  var hardwareEncoding: String { text("Use hardware encoder", "使用硬件编码") }
+  var volume: String { text("Volume", "音量") }
+  var fadeIn: String { text("Fade in", "淡入") }
+  var fadeOut: String { text("Fade out", "淡出") }
+  var detectedCodec: String { text("Codec", "编码器") }
 
   func hideAssetMessage(_ filename: String) -> String {
     text(
@@ -352,6 +420,7 @@ struct LibraryView: View {
     case duplicates
     case similar
     case hidden
+    case health
     case smart(SmartAssetView)
   }
 
@@ -628,6 +697,8 @@ struct LibraryView: View {
         }
       }
       Section(language.status) {
+        Label(language.indexHealth, systemImage: "heart.text.square")
+          .tag(SectionSelection.health)
         Label(
           model.statusMessage,
           systemImage: model.isScanning
@@ -667,13 +738,10 @@ struct LibraryView: View {
 
   @ViewBuilder
   private var content: some View {
-    if selection == .duplicates {
-      groupedContent(
-        title: "Exact Duplicates",
-        emptyTitle: "No Exact Duplicates",
-        emptyDescription: "Files with identical SHA-256 hashes appear here.",
-        groups: model.duplicateGroups.map(\.assetIDs)
-      )
+    if selection == .health {
+      IndexHealthView(model: model, language: language)
+    } else if selection == .duplicates {
+      duplicateContent
     } else if selection == .similar {
       groupedContent(
         title: "Similar Images",
@@ -709,6 +777,29 @@ struct LibraryView: View {
         emptyTitle: language.noMatchingImages,
         emptyDescription: language.noMatchingDescription
       )
+    }
+  }
+
+  @ViewBuilder
+  private var duplicateContent: some View {
+    let groups = model.duplicateGroups.map { group in
+      model.assets.filter { group.assetIDs.contains($0.id) }
+    }
+    if groups.isEmpty {
+      ContentUnavailableView(
+        "No Exact Duplicates",
+        systemImage: "square.stack.3d.up.slash",
+        description: Text("Files with identical SHA-256 hashes appear here.")
+      )
+    } else {
+      DuplicateComparisonView(
+        groups: groups,
+        enrichments: model.enrichments,
+        language: language,
+        onOpen: { previewAsset = $0 },
+        onHide: hideAsset
+      )
+      .navigationTitle("Exact Duplicates")
     }
   }
 

@@ -130,6 +130,7 @@ public struct ImageEditPipeline: Sendable {
         adjustments: request.adjustments,
         annotations: request.annotations,
         maskStrokes: request.maskStrokes,
+        localAdjustments: request.localAdjustments,
         layers: request.layers
       )
     )

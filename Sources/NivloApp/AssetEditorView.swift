@@ -1,6 +1,7 @@
 import AppKit
 import NivloDomain
 import NivloImaging
+import NivloPersistence
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -61,8 +62,26 @@ struct AssetEditorView: View {
   @State private var isExporting = false
   @State private var isExportOptionsPresented = false
   @State private var isCropEditing = true
+  @State private var histogram: ImageHistogram?
+  @State private var customAdjustmentPresets: [ImageAdjustmentPreset] = []
+  @State private var selectedAdjustmentPresetID = ""
+  @State private var adjustmentPresetName = ""
+  @State private var localAdjustmentSettings = ImageAdjustmentSettings()
+  @State private var renderedPreview: NSImage?
+  @State private var isRenderedPreviewPresented = false
+  @State private var isRenderingPreview = false
+  @State private var comparisonShowsOriginal = false
+  @State private var zoomScale = 1.0
+  @State private var zoomGestureBase = 1.0
+  @State private var panOffset = CGSize.zero
+  @State private var panGestureBase = CGSize.zero
+  @State private var actualSizeScale = 1.0
+  @State private var sessionSaveTask: Task<Void, Never>?
 
   private let pipeline = ImageEditPipeline()
+  private let previewRenderer = ImageEditPreviewRenderer()
+  private let histogramAnalyzer = ImageHistogramAnalyzer()
+  private let sessionStore = EditSessionStoreProvider.shared
   private let inspectorWidth: CGFloat = 360
 
   private var editSnapshot: ImageEditSnapshot {
@@ -91,6 +110,25 @@ struct AssetEditorView: View {
       statusBar
     }
     .frame(minWidth: 1_080, minHeight: 760)
+    .task(id: asset.id) {
+      await loadEditorState()
+    }
+    .onChange(of: editSnapshot) { _, snapshot in
+      scheduleSessionSave(snapshot)
+      if isRenderedPreviewPresented {
+        isRenderedPreviewPresented = false
+        renderedPreview = nil
+      }
+    }
+    .onDisappear {
+      sessionSaveTask?.cancel()
+      if let sessionStore {
+        let snapshot = editSnapshot
+        Task {
+          try? await sessionStore.saveImageSession(snapshot, for: asset.id)
+        }
+      }
+    }
   }
 
   private var toolbar: some View {
@@ -104,17 +142,80 @@ struct AssetEditorView: View {
           .lineLimit(1)
           .truncationMode(.middle)
       }
-      .frame(maxWidth: 360, alignment: .leading)
+      .frame(maxWidth: 240, alignment: .leading)
       Spacer()
       if !toolsReady {
-        Label(language.toolsNotReady, systemImage: "wrench.and.screwdriver")
-          .font(.caption)
+        Image(systemName: "wrench.and.screwdriver")
           .foregroundStyle(.orange)
+          .help(language.toolsNotReady)
+      }
+      Button {
+        undo()
+      } label: {
+        Image(systemName: "arrow.uturn.backward")
+      }
+      .disabled(!editSession.canUndo)
+      .keyboardShortcut("z", modifiers: .command)
+      .help(language.undo)
+      Button {
+        redo()
+      } label: {
+        Image(systemName: "arrow.uturn.forward")
+      }
+      .disabled(!editSession.canRedo)
+      .keyboardShortcut("z", modifiers: [.command, .shift])
+      .help(language.redo)
+      Picker("Comparison", selection: $comparisonShowsOriginal) {
+        Text(language.before).tag(true)
+        Text(language.after).tag(false)
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .frame(width: 130)
+      Button {
+        if isRenderedPreviewPresented {
+          isRenderedPreviewPresented = false
+          renderedPreview = nil
+        } else {
+          renderPixelPreview()
+        }
+      } label: {
+        Image(systemName: "circle.lefthalf.filled")
+      }
+      .disabled(isRenderingPreview || comparisonShowsOriginal)
+      .help(
+        isRenderedPreviewPresented
+          ? language.exitPreview : language.renderedPreview
+      )
+      Menu {
+        Button(language.fit) {
+          setZoom(1)
+        }
+        .keyboardShortcut("0", modifiers: .command)
+        Button(language.actualSize) {
+          setZoom(actualSizeScale)
+        }
+        .keyboardShortcut("1", modifiers: .command)
+        Divider()
+        Button {
+          setZoom(zoomScale / 1.25)
+        } label: {
+          Label("Zoom Out", systemImage: "minus.magnifyingglass")
+        }
+        .keyboardShortcut("-", modifiers: .command)
+        Button {
+          setZoom(zoomScale * 1.25)
+        } label: {
+          Label("Zoom In", systemImage: "plus.magnifyingglass")
+        }
+        .keyboardShortcut("+", modifiers: .command)
+      } label: {
+        Image(systemName: "magnifyingglass")
       }
       Button {
         isExportOptionsPresented = true
       } label: {
-        Label(language.saveEditedCopy, systemImage: "square.and.arrow.up")
+        Label(language.export, systemImage: "square.and.arrow.up")
       }
       .buttonStyle(.borderedProminent)
       .disabled(!canEdit || isExporting || !toolsReady)
@@ -145,7 +246,7 @@ struct AssetEditorView: View {
       .keyboardShortcut(.cancelAction)
     }
     .padding(.horizontal, 20)
-    .padding(.vertical, 14)
+    .frame(height: 64)
   }
 
   private var imageAspectSize: CGSize {
@@ -175,9 +276,19 @@ struct AssetEditorView: View {
       ZStack {
         Color(nsColor: .underPageBackgroundColor)
         if canEdit {
-          editableCanvas(size: layout.contentRect.size)
+          canvasContent(size: layout.contentRect.size)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .padding(24)
+            .scaleEffect(zoomScale)
+            .offset(panOffset)
+            .simultaneousGesture(zoomGesture)
+            .simultaneousGesture(panGesture)
+            .onAppear {
+              updateActualSizeScale(for: layout.contentRect.size)
+            }
+            .onChange(of: layout.contentRect.size) { _, size in
+              updateActualSizeScale(for: size)
+            }
         } else {
           ContentUnavailableView(
             "Preview unavailable",
@@ -185,6 +296,28 @@ struct AssetEditorView: View {
           )
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func canvasContent(size: CGSize) -> some View {
+    if comparisonShowsOriginal {
+      AssetImageView(
+        asset: asset,
+        enrichment: nil,
+        maxPixelSize: 1_800,
+        contentMode: .fit
+      )
+      .frame(width: size.width, height: size.height)
+    } else if isRenderedPreviewPresented, let renderedPreview {
+      Image(nsImage: renderedPreview)
+        .resizable()
+        .interpolation(.high)
+        .scaledToFit()
+        .frame(width: size.width, height: size.height)
+        .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+    } else {
+      editableCanvas(size: size)
     }
   }
 
@@ -270,6 +403,11 @@ struct AssetEditorView: View {
           case .mask:
             maskControls
           }
+          Divider()
+          EditorLayerControls(
+            language: language,
+            layers: snapshotBinding(\.layers)
+          )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
@@ -288,7 +426,13 @@ struct AssetEditorView: View {
         .foregroundStyle(.secondary)
         .textCase(.uppercase)
 
-      HStack(spacing: 6) {
+      LazyVGrid(
+        columns: [
+          GridItem(.flexible(), spacing: 6),
+          GridItem(.flexible(), spacing: 6),
+        ],
+        spacing: 6
+      ) {
         ForEach(ImageEditorTool.allCases) { tool in
           Button {
             selectedTool = tool
@@ -361,59 +505,13 @@ struct AssetEditorView: View {
   }
 
   private var geometryControls: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Text(isCropEditing ? language.editorGeometryHint : language.cropAppliedHint)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
-      cropSizeReadout
-
-      HStack(spacing: 8) {
-        Button {
-          updateSnapshot { $0.quarterTurns = normalizedQuarterTurns($0.quarterTurns - 1) }
-        } label: {
-          Label(language.rotateLeft, systemImage: "rotate.left")
-        }
-        Button {
-          updateSnapshot { $0.quarterTurns = normalizedQuarterTurns($0.quarterTurns + 1) }
-        } label: {
-          Label(language.rotateRight, systemImage: "rotate.right")
-        }
-      }
-      Button {
-        updateSnapshot { $0.flippedHorizontally.toggle() }
-      } label: {
-        Label(
-          language.flipHorizontal,
-          systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-      }
-      if !isCropEditing, !editSnapshot.cropRect.isEffectivelyFull {
-        Button(language.adjustCrop) {
-          isCropEditing = true
-        }
-      }
-      HStack(spacing: 8) {
-        Button(language.applyCrop) {
-          isCropEditing = false
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(editSnapshot.cropRect.isEffectivelyFull || !isCropEditing)
-        Button(language.reset) {
-          resetGeometry()
-        }
-        .buttonStyle(.bordered)
-      }
-    }
-  }
-
-  private var cropSizeReadout: some View {
-    let crop = editSnapshot.cropRect.clamped()
-    return Text(
-      "\(language.cropSizeLabel): \(Int(crop.width * 100))% × \(Int(crop.height * 100))%"
+    ImageGeometryInspector(
+      language: language,
+      cropRect: snapshotBinding(\.cropRect),
+      quarterTurns: snapshotBinding(\.quarterTurns),
+      flippedHorizontally: snapshotBinding(\.flippedHorizontally),
+      isCropEditing: $isCropEditing
     )
-    .font(.caption.monospacedDigit())
-    .foregroundStyle(.secondary)
   }
 
   private var adjustControls: some View {
@@ -423,188 +521,39 @@ struct AssetEditorView: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
-      sliderRow(language.adjustExposure, keyPath: \.exposure, range: -1...1)
-      sliderRow(language.adjustContrast, keyPath: \.contrast, range: -0.5...0.5)
-      sliderRow(language.adjustSaturation, keyPath: \.saturation, range: -0.5...0.5)
-      sliderRow(language.adjustWarmth, keyPath: \.warmth, range: -1...1)
+      ImageAdjustmentInspector(
+        language: language,
+        settings: snapshotBinding(\.adjustments),
+        histogram: histogram,
+        presets: ImageAdjustmentPreset.builtIn + customAdjustmentPresets,
+        selectedPresetID: $selectedAdjustmentPresetID,
+        presetName: $adjustmentPresetName,
+        onSavePreset: saveAdjustmentPreset
+      )
       Button(language.reset) {
         updateSnapshot { $0.adjustments = .neutral }
+        selectedAdjustmentPresetID = ""
       }
     }
   }
 
   private var annotateControls: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Button(language.addTextAnnotation) {
-        addAnnotation(
-          ImageAnnotation(
-            kind: .text,
-            text: language.annotationPlaceholder,
-            normalizedRect: NormalizedCropRect(
-              x: 0.3,
-              y: 0.3,
-              width: 0.4,
-              height: 0.14
-            )
-          )
-        )
-      }
-      Button(language.addRectangleAnnotation) {
-        addAnnotation(
-          ImageAnnotation(
-            kind: .rectangle,
-            normalizedRect: NormalizedCropRect(
-              x: 0.3,
-              y: 0.3,
-              width: 0.4,
-              height: 0.3
-            )
-          )
-        )
-      }
-      Button(language.addArrowAnnotation) {
-        addAnnotation(
-          ImageAnnotation(
-            kind: .arrow,
-            normalizedRect: NormalizedCropRect(
-              x: 0.25,
-              y: 0.25,
-              width: 0.5,
-              height: 0.4
-            )
-          )
-        )
-      }
-
-      if let annotation = selectedAnnotationBinding {
-        Divider()
-        annotationControls(annotation)
-        Button(language.deleteAnnotation, role: .destructive) {
-          let id = annotation.wrappedValue.id
-          updateSnapshot { snapshot in
-            snapshot.annotations.removeAll { $0.id == id }
-          }
-          selectedAnnotationID = nil
-        }
-      }
-      if !editSnapshot.annotations.isEmpty {
-        Button(language.clearAnnotations, role: .destructive) {
-          updateSnapshot { $0.annotations.removeAll() }
-          selectedAnnotationID = nil
-        }
-      }
-    }
+    ImageAnnotationInspector(
+      language: language,
+      annotations: snapshotBinding(\.annotations),
+      selectedAnnotationID: $selectedAnnotationID
+    )
   }
 
   private var maskControls: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Text(language.maskBrushHint)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
-      Slider(value: $brushRadius, in: 0.01...0.12) {
-        Text(language.maskBrushSize)
-      }
-
-      Picker(language.maskMode, selection: $maskOperation) {
-        Label(language.maskPaint, systemImage: "paintbrush.fill")
-          .tag(MaskStrokeOperation.paint)
-        Label(language.maskErase, systemImage: "eraser.fill")
-          .tag(MaskStrokeOperation.erase)
-      }
-      .pickerStyle(.segmented)
-
-      Text("\(language.maskStrokeCount): \(editSnapshot.maskStrokes.count)")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      if !editSnapshot.maskStrokes.isEmpty {
-        Button(language.clearMask, role: .destructive) {
-          updateSnapshot { $0.maskStrokes.removeAll() }
-          currentMaskStroke = nil
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func annotationControls(_ annotation: Binding<ImageAnnotation>) -> some View {
-    switch annotation.wrappedValue.kind {
-    case .text:
-      TextField(language.annotationText, text: annotation.text)
-      Picker(language.annotationFont, selection: annotation.textStyle.fontName) {
-        ForEach(["Helvetica", "Arial", "Avenir Next", "Georgia", "Menlo"], id: \.self) {
-          Text($0).tag($0)
-        }
-      }
-      HStack {
-        Text(language.annotationFontSize)
-        Slider(value: annotation.textStyle.fontSize, in: 8...96, step: 1)
-        Text("\(Int(annotation.wrappedValue.textStyle.fontSize))")
-          .monospacedDigit()
-      }
-      Toggle(language.annotationBold, isOn: annotation.textStyle.isBold)
-      Toggle(language.annotationItalic, isOn: annotation.textStyle.isItalic)
-      RGBAColorPicker(title: language.annotationColor, color: annotation.textStyle.color)
-    case .rectangle:
-      RGBAColorPicker(
-        title: language.annotationStrokeColor,
-        color: annotation.rectangleStyle.strokeColor
-      )
-      RGBAColorPicker(
-        title: language.annotationFillColor,
-        color: annotation.rectangleStyle.fillColor
-      )
-      lineWidthSlider(annotation.rectangleStyle.lineWidth)
-      Picker(language.annotationLineStyle, selection: annotation.rectangleStyle.lineStyle) {
-        ForEach(AnnotationLineStyle.allCases, id: \.self) { style in
-          Text(language.annotationLineStyleName(style)).tag(style)
-        }
-      }
-    case .arrow:
-      RGBAColorPicker(title: language.annotationColor, color: annotation.arrowStyle.color)
-      lineWidthSlider(annotation.arrowStyle.lineWidth)
-      Picker(language.arrowDirection, selection: annotation.arrowStyle.direction) {
-        ForEach(ArrowDirection.allCases, id: \.self) { direction in
-          Text(language.arrowDirectionName(direction)).tag(direction)
-        }
-      }
-    }
-  }
-
-  private func lineWidthSlider(_ width: Binding<Double>) -> some View {
-    HStack {
-      Text(language.annotationLineWidth)
-      Slider(value: width, in: 1...16, step: 1)
-      Text("\(Int(width.wrappedValue))")
-        .monospacedDigit()
-    }
-  }
-
-  private func sliderRow(
-    _ title: String,
-    keyPath: WritableKeyPath<ImageAdjustmentSettings, Double>,
-    range: ClosedRange<Double>
-  ) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(title)
-        .font(.caption)
-      Slider(
-        value: adjustmentBinding(keyPath),
-        in: range
-      )
-    }
-  }
-
-  private func adjustmentBinding(
-    _ keyPath: WritableKeyPath<ImageAdjustmentSettings, Double>
-  ) -> Binding<Double> {
-    Binding(
-      get: { editSnapshot.adjustments[keyPath: keyPath] },
-      set: { newValue in
-        updateSnapshot { $0.adjustments[keyPath: keyPath] = newValue }
-      }
+    ImageMaskInspector(
+      language: language,
+      maskStrokes: snapshotBinding(\.maskStrokes),
+      localAdjustments: snapshotBinding(\.localAdjustments),
+      currentMaskStroke: $currentMaskStroke,
+      brushRadius: $brushRadius,
+      maskOperation: $maskOperation,
+      localAdjustmentSettings: $localAdjustmentSettings
     )
   }
 
@@ -621,61 +570,23 @@ struct AssetEditorView: View {
     editSession.update(mutate)
   }
 
-  private func addAnnotation(_ annotation: ImageAnnotation) {
-    updateSnapshot { $0.annotations.append(annotation) }
-    selectedAnnotationID = annotation.id
-  }
-
-  private var selectedAnnotationBinding: Binding<ImageAnnotation>? {
-    guard
-      let selectedAnnotationID,
-      editSnapshot.annotations.contains(where: { $0.id == selectedAnnotationID })
-    else {
-      return nil
-    }
-    return Binding(
-      get: {
-        editSnapshot.annotations.first(where: { $0.id == selectedAnnotationID })
-          ?? ImageAnnotation(
-            kind: .text,
-            normalizedRect: NormalizedCropRect(
-              x: 0.3,
-              y: 0.3,
-              width: 0.4,
-              height: 0.14
-            )
-          )
-      },
-      set: { annotation in
-        updateSnapshot { snapshot in
-          guard
-            let index = snapshot.annotations.firstIndex(where: {
-              $0.id == selectedAnnotationID
-            })
-          else {
-            return
-          }
-          snapshot.annotations[index] = annotation
-        }
-      }
-    )
-  }
-
   private func revertEdits() {
     editSession.revert()
     currentMaskStroke = nil
     selectedAnnotationID = nil
     exportMessage = nil
     isCropEditing = true
+    selectedAdjustmentPresetID = ""
   }
 
-  private func resetGeometry() {
-    updateSnapshot {
-      $0.cropRect = ImageEditSnapshot.defaultInitial.cropRect
-      $0.quarterTurns = 0
-      $0.flippedHorizontally = false
-    }
-    isCropEditing = true
+  private func undo() {
+    editSession.undo()
+    currentMaskStroke = nil
+  }
+
+  private func redo() {
+    editSession.redo()
+    currentMaskStroke = nil
   }
 
   private func exportEditedCopy() {
@@ -700,6 +611,7 @@ struct AssetEditorView: View {
       adjustments: snapshot.adjustments,
       annotations: snapshot.annotations,
       maskStrokes: snapshot.maskStrokes,
+      localAdjustments: snapshot.localAdjustments,
       layers: snapshot.layers,
       format: outputFormat,
       quality: Int(quality),
@@ -737,53 +649,117 @@ struct AssetEditorView: View {
     ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
   }
 
-  private func normalizedQuarterTurns(_ value: Int) -> Int {
-    (value % 4 + 4) % 4
+  private var zoomGesture: some Gesture {
+    MagnificationGesture()
+      .onChanged { value in
+        zoomScale = min(max(zoomGestureBase * value, 0.25), 8)
+      }
+      .onEnded { _ in
+        zoomGestureBase = zoomScale
+      }
   }
-}
 
-// MARK: - Export options popover
-
-private struct ExportOptionsPopover: View {
-  let language: NivloLanguage
-  @Binding var outputFormat: PicxOutputFormat
-  @Binding var quality: Double
-  @Binding var preset: PicxPreset
-  @Binding var maxWidth: String
-  @Binding var maxHeight: String
-  @Binding var targetSizeKB: String
-  let isExporting: Bool
-  let onChooseLocation: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Text(language.tabExport)
-        .font(.headline)
-
-      Picker(language.exportFormat, selection: $outputFormat) {
-        ForEach(PicxOutputFormat.allCases, id: \.self) { format in
-          Text(format.rawValue.uppercased()).tag(format)
-        }
+  private var panGesture: some Gesture {
+    DragGesture(minimumDistance: 4)
+      .onChanged { value in
+        guard zoomScale > 1, selectedTool == .adjust else { return }
+        panOffset = CGSize(
+          width: panGestureBase.width + value.translation.width,
+          height: panGestureBase.height + value.translation.height
+        )
       }
-      Picker(language.exportPreset, selection: $preset) {
-        ForEach(PicxPreset.allCases, id: \.self) { item in
-          Text(item.rawValue).tag(item)
-        }
+      .onEnded { _ in
+        panGestureBase = panOffset
       }
-      Slider(value: $quality, in: 1...100, step: 1) {
-        Text("\(language.exportQuality): \(Int(quality))")
-      }
-      TextField(language.maxWidth, text: $maxWidth)
-      TextField(language.maxHeight, text: $maxHeight)
-      TextField(language.targetSizeKB, text: $targetSizeKB)
+  }
 
-      Button {
-        onChooseLocation()
-      } label: {
-        Label(language.chooseExportLocation, systemImage: "folder")
-      }
-      .buttonStyle(.borderedProminent)
-      .disabled(isExporting)
+  private func setZoom(_ value: Double) {
+    zoomScale = min(max(value, 0.25), 8)
+    zoomGestureBase = zoomScale
+    if zoomScale <= 1 {
+      panOffset = .zero
+      panGestureBase = .zero
     }
   }
+
+  private func updateActualSizeScale(for canvasSize: CGSize) {
+    guard canvasSize.width > 0, canvasSize.height > 0 else { return }
+    actualSizeScale = min(
+      8,
+      max(
+        0.25,
+        max(
+          imageAspectSize.width / canvasSize.width,
+          imageAspectSize.height / canvasSize.height
+        )
+      )
+    )
+  }
+
+  private func renderPixelPreview() {
+    isRenderingPreview = true
+    let snapshot = editSnapshot
+    let sourceURL = asset.url
+    Task {
+      do {
+        let image = try await Task.detached(priority: .userInitiated) {
+          try previewRenderer.renderPreviewImage(
+            sourceURL: sourceURL,
+            snapshot: snapshot
+          )
+        }.value
+        renderedPreview = image
+        isRenderedPreviewPresented = true
+        exportMessage = language.previewActive
+      } catch {
+        exportMessage = "\(language.previewFailed): \(error.localizedDescription)"
+      }
+      isRenderingPreview = false
+    }
+  }
+
+  private func loadEditorState() async {
+    if let sessionStore {
+      if let saved = try? await sessionStore.imageSession(for: asset.id) {
+        var restored = ImageEditSession(
+          initialSnapshot: ImageEditSnapshot.defaultInitial
+        )
+        restored.replaceCurrent(with: saved)
+        editSession = restored
+      }
+      customAdjustmentPresets =
+        (try? await sessionStore.adjustmentPresets()) ?? []
+    }
+    histogram = try? await Task.detached(priority: .utility) {
+      try histogramAnalyzer.analyze(url: asset.url)
+    }.value
+  }
+
+  private func scheduleSessionSave(_ snapshot: ImageEditSnapshot) {
+    guard let sessionStore else { return }
+    sessionSaveTask?.cancel()
+    sessionSaveTask = Task {
+      try? await Task.sleep(for: .milliseconds(350))
+      guard !Task.isCancelled else { return }
+      try? await sessionStore.saveImageSession(snapshot, for: asset.id)
+    }
+  }
+
+  private func saveAdjustmentPreset() {
+    guard let sessionStore else { return }
+    let name = adjustmentPresetName.trimmingCharacters(in: .whitespaces)
+    guard !name.isEmpty else { return }
+    let preset = ImageAdjustmentPreset(
+      id: UUID().uuidString,
+      name: name,
+      settings: editSnapshot.adjustments
+    )
+    customAdjustmentPresets.append(preset)
+    selectedAdjustmentPresetID = preset.id
+    adjustmentPresetName = ""
+    Task {
+      try? await sessionStore.saveAdjustmentPresets(customAdjustmentPresets)
+    }
+  }
+
 }
