@@ -145,30 +145,6 @@ struct AssetEditorView: View {
       .pickerStyle(.segmented)
       .labelsHidden()
       .frame(width: 130)
-      Button {
-        if isRenderedPreviewPresented {
-          isRenderedPreviewPresented = false
-          renderedPreview = nil
-        } else {
-          renderPixelPreview()
-        }
-      } label: {
-        if isRenderingPreview {
-          ProgressView()
-            .controlSize(.small)
-        } else {
-          Label(
-            isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview,
-            systemImage: isRenderedPreviewPresented ? "xmark.circle" : "sparkles.rectangle.stack"
-          )
-        }
-      }
-      .buttonStyle(.bordered)
-      .disabled(isRenderingPreview || comparisonShowsOriginal)
-      .help(
-        isRenderedPreviewPresented
-          ? language.exitPreview : language.renderedPreview
-      )
       Menu {
         Button(language.fit) {
           setZoom(1)
@@ -376,12 +352,6 @@ struct AssetEditorView: View {
           }
         )
         Divider()
-        Label(
-          selectedTool.title(language: language),
-          systemImage: selectedTool.icon
-        )
-        .font(.title3.weight(.semibold))
-
         switch selectedTool {
         case .geometry:
           geometryControls
@@ -464,10 +434,14 @@ struct AssetEditorView: View {
         settings: snapshotBinding(\.adjustments),
         histogram: histogram,
         requiresFullRenderPreview: editSnapshot.adjustments.requiresFullRenderPreview,
+        isRenderingPreview: isRenderingPreview,
+        isRenderedPreviewPresented: isRenderedPreviewPresented,
+        isRenderPreviewDisabled: comparisonShowsOriginal,
         presets: ImageAdjustmentPreset.builtIn + customAdjustmentPresets,
         selectedPresetID: $selectedAdjustmentPresetID,
         presetName: $adjustmentPresetName,
-        onSavePreset: saveAdjustmentPreset
+        onSavePreset: saveAdjustmentPreset,
+        onRenderPreview: toggleRenderedPreview
       )
       Button(language.reset) {
         updateSnapshot { $0.adjustments = .neutral }
@@ -517,6 +491,15 @@ struct AssetEditorView: View {
   private func redo() {
     editSession.redo()
     currentMaskStroke = nil
+  }
+
+  private func toggleRenderedPreview() {
+    if isRenderedPreviewPresented {
+      isRenderedPreviewPresented = false
+      renderedPreview = nil
+    } else {
+      renderPixelPreview()
+    }
   }
 
   private func exportEditedCopy() {

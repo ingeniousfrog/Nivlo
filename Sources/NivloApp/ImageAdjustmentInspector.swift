@@ -7,15 +7,23 @@ struct ImageAdjustmentInspector: View {
   @Binding var settings: ImageAdjustmentSettings
   let histogram: ImageHistogram?
   let requiresFullRenderPreview: Bool
+  let isRenderingPreview: Bool
+  let isRenderedPreviewPresented: Bool
+  let isRenderPreviewDisabled: Bool
   let presets: [ImageAdjustmentPreset]
   @Binding var selectedPresetID: String
   @Binding var presetName: String
   let onSavePreset: () -> Void
+  let onRenderPreview: () -> Void
 
   @State private var levelChannel: ImageColorChannel = .rgb
   @State private var curveChannel: ImageColorChannel = .rgb
   @State private var colorBand: HSLColorBand = .red
   @State private var isPresetExpanded = false
+  @State private var isBasicExpanded = true
+  @State private var isLevelsExpanded = false
+  @State private var isCurvesExpanded = false
+  @State private var isColorMixerExpanded = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -40,17 +48,7 @@ struct ImageAdjustmentInspector: View {
           .fixedSize(horizontal: false, vertical: true)
       }
 
-      if requiresFullRenderPreview {
-        Label(language.fullRenderPreviewHint, systemImage: "sparkles.rectangle.stack")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .padding(8)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .background(
-            Color.accentColor.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 8)
-          )
-      }
+      renderPreviewCallout
 
       DisclosureGroup(language.adjustmentPreset, isExpanded: $isPresetExpanded) {
         VStack(alignment: .leading, spacing: 8) {
@@ -76,7 +74,7 @@ struct ImageAdjustmentInspector: View {
       .font(.caption)
       .padding(.vertical, 2)
 
-      GroupBox(language.basicAdjustments) {
+      adjustmentSection(language.basicAdjustments, isExpanded: $isBasicExpanded) {
         VStack(alignment: .leading, spacing: 10) {
           slider(language.adjustExposure, value: $settings.exposure, range: -2...2)
           slider(language.adjustContrast, value: $settings.contrast, range: -0.5...0.5)
@@ -93,7 +91,7 @@ struct ImageAdjustmentInspector: View {
         }
       }
 
-      GroupBox(language.levels) {
+      adjustmentSection(language.levels, isExpanded: $isLevelsExpanded) {
         VStack(alignment: .leading, spacing: 10) {
           channelPicker(selection: $levelChannel)
           slider(
@@ -114,15 +112,15 @@ struct ImageAdjustmentInspector: View {
         }
       }
 
-      GroupBox(language.curves) {
+      adjustmentSection(language.curves, isExpanded: $isCurvesExpanded) {
         VStack(alignment: .leading, spacing: 10) {
           channelPicker(selection: $curveChannel)
           CurveEditor(curve: curveBinding)
-            .frame(height: 170)
+            .frame(height: 132)
         }
       }
 
-      GroupBox(language.colorMixer) {
+      adjustmentSection(language.colorMixer, isExpanded: $isColorMixerExpanded) {
         VStack(alignment: .leading, spacing: 10) {
           Picker(language.colorBand, selection: $colorBand) {
             ForEach(HSLColorBand.allCases, id: \.self) {
@@ -145,6 +143,64 @@ struct ImageAdjustmentInspector: View {
     }
   }
 
+  private var renderPreviewCallout: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Label(
+        requiresFullRenderPreview
+          ? language.fullRenderPreviewHint : language.renderPreviewControlHint,
+        systemImage: "sparkles.rectangle.stack"
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+
+      Spacer(minLength: 8)
+
+      Button {
+        onRenderPreview()
+      } label: {
+        if isRenderingPreview {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Label(
+            isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview,
+            systemImage: isRenderedPreviewPresented ? "xmark.circle" : "sparkles.rectangle.stack"
+          )
+          .labelStyle(.titleAndIcon)
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.small)
+      .disabled(isRenderingPreview || isRenderPreviewDisabled)
+      .help(isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview)
+    }
+    .padding(10)
+    .background(
+      Color.accentColor.opacity(requiresFullRenderPreview ? 0.1 : 0.06),
+      in: RoundedRectangle(cornerRadius: 10)
+    )
+  }
+
+  private func adjustmentSection<Content: View>(
+    _ title: String,
+    isExpanded: Binding<Bool>,
+    @ViewBuilder content: @escaping () -> Content
+  ) -> some View {
+    DisclosureGroup(isExpanded: isExpanded) {
+      content()
+        .padding(.top, 8)
+    } label: {
+      Text(title)
+        .font(.caption.weight(.semibold))
+    }
+    .padding(10)
+    .background(
+      Color(nsColor: .controlBackgroundColor).opacity(0.75),
+      in: RoundedRectangle(cornerRadius: 12)
+    )
+  }
+
   private func clippingLabel(_ title: String, count: Int) -> some View {
     Label("\(title): \(count)", systemImage: count > 0 ? "exclamationmark.triangle" : "checkmark")
       .font(.caption2)
@@ -160,6 +216,7 @@ struct ImageAdjustmentInspector: View {
       }
     }
     .pickerStyle(.segmented)
+    .controlSize(.small)
   }
 
   private func slider(

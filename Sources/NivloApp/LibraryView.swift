@@ -172,8 +172,14 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var fullRenderPreviewHint: String {
     text(
-      "This adjustment is applied by the full render engine. Use Render Preview to see the exact canvas result.",
-      "此调整由完整渲染引擎应用；请用「渲染预览」查看精确画布效果。"
+      "Advanced controls need Render Preview for the exact canvas result.",
+      "高级参数需用「渲染预览」查看精确效果。"
+    )
+  }
+  var renderPreviewControlHint: String {
+    text(
+      "Use Render Preview when a control does not update the canvas directly.",
+      "参数未直接更新画布时，请使用「渲染预览」。"
     )
   }
   var basicAdjustments: String { text("Basic", "基础调整") }

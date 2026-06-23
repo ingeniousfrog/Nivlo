@@ -100,6 +100,16 @@ struct AdvancedImageEditingTests {
         ]
       ).requiresFullRenderPreview
     )
+    #expect(
+      ImageAdjustmentSettings(
+        levels: [.red: ImageLevels(blackPoint: 0.1, whitePoint: 0.9)]
+      ).requiresFullRenderPreview
+    )
+    #expect(
+      ImageAdjustmentSettings(
+        colorBands: [.blue: HSLBandAdjustment(luminance: 0.2)]
+      ).requiresFullRenderPreview
+    )
   }
 
   @Test("decoded tone controls normalize untrusted values")
