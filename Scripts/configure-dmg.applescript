@@ -15,10 +15,10 @@ on run argv
       set background picture of viewOptions to file ".background:background.png"
       set position of item (appName & ".app") of container window to {180, 170}
       set position of item "Applications" of container window to {480, 170}
-      close
-      open
       update without registering applications
-      delay 2
+      delay 1
+      close
+      delay 1
     end tell
   end tell
 end run

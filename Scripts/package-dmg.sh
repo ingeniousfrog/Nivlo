@@ -93,6 +93,36 @@ cp -R "${APP_DIR}" "${STAGING_DIR}/"
 ln -s /Applications "${STAGING_DIR}/Applications"
 
 DMG_SIZE_MB=$(( $(du -sm "${STAGING_DIR}" | awk '{print $1}') + 40 ))
+
+close_finder_windows_for_volume() {
+  local volume_name="$1"
+  osascript <<EOF >/dev/null 2>&1 || true
+tell application "Finder"
+  try
+    close every window whose name is "${volume_name}"
+  end try
+end tell
+EOF
+}
+
+detach_dmg_volume() {
+  local mount_path="$1"
+  local attempt
+
+  for attempt in $(seq 1 12); do
+    if hdiutil detach "${mount_path}" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    close_finder_windows_for_volume "${APP_NAME}"
+    sync
+    sleep 2
+  done
+
+  echo "Force-detaching ${mount_path}..." >&2
+  hdiutil detach "${mount_path}" -force
+}
+
 hdiutil create \
   -volname "${APP_NAME}" \
   -srcfolder "${STAGING_DIR}" \
@@ -110,14 +140,17 @@ fi
 
 cleanup_dmg_mount() {
   if [[ -n "${VOLUME_PATH:-}" && -d "${VOLUME_PATH}" ]]; then
-    hdiutil detach "${VOLUME_PATH}" >/dev/null 2>&1 || true
+    detach_dmg_volume "${VOLUME_PATH}" || true
   fi
 }
 trap cleanup_dmg_mount EXIT
 
 osascript "${ROOT_DIR}/Scripts/configure-dmg.applescript" "${APP_NAME}" "${APP_NAME}"
+close_finder_windows_for_volume "${APP_NAME}"
+sync
+sleep 1
 
-hdiutil detach "${VOLUME_PATH}" >/dev/null
+detach_dmg_volume "${VOLUME_PATH}"
 trap - EXIT
 VOLUME_PATH=""
 
