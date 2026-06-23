@@ -424,11 +424,6 @@ struct AssetEditorView: View {
 
   private var adjustControls: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text(language.editorAdjustHint)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
       ImageAdjustmentInspector(
         language: language,
         settings: snapshotBinding(\.adjustments),

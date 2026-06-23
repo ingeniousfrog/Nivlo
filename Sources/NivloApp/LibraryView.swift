@@ -164,31 +164,27 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   var shadowClipping: String { text("Shadow clipping", "阴影溢出") }
   var highlightClipping: String { text("Highlight clipping", "高光溢出") }
   var sourceHistogram: String { text("Source histogram", "源图直方图") }
-  var sourceHistogramHint: String {
-    text(
-      "The histogram describes the original pixels; use Render Preview to inspect the full adjusted result.",
-      "这里显示原始像素分布；请用「渲染预览」查看完整调整后的结果。"
-    )
-  }
   var fullRenderPreviewHint: String {
     text(
-      "Advanced controls need Render Preview for the exact canvas result.",
-      "高级参数需用「渲染预览」查看精确效果。"
+      "Advanced edits need preview.",
+      "高级参数需预览。"
     )
   }
   var renderPreviewControlHint: String {
     text(
-      "Use Render Preview when a control does not update the canvas directly.",
-      "参数未直接更新画布时，请使用「渲染预览」。"
+      "Preview the exact render.",
+      "预览精确渲染。"
     )
   }
   var basicAdjustments: String { text("Basic", "基础调整") }
   var levels: String { text("Levels", "色阶") }
   var curves: String { text("Curves", "曲线") }
+  var adjustmentSection: String { text("Adjustment section", "调整分区") }
   var blackPoint: String { text("Black point", "黑场") }
   var whitePoint: String { text("White point", "白场") }
   var gamma: String { text("Gamma / midtone", "Gamma / 中间调") }
   var colorMixer: String { text("HSL / HSV color mixer", "HSL / HSV 分色调整") }
+  var shortColorMixer: String { text("HSV", "HSV") }
   var colorBand: String { text("Color band", "颜色范围") }
   var channel: String { text("Channel", "通道") }
   var hue: String { text("Hue", "色相") }
@@ -307,8 +303,8 @@ enum NivloLanguage: String, CaseIterable, Identifiable {
   }
   var editorAdjustHint: String {
     text(
-      "Exposure, contrast, saturation, and warmth preview directly on the canvas. Use Render Preview for the full adjustment engine.",
-      "曝光、对比度、饱和度和色温会直接在画布上预览；完整调整效果请使用「渲染预览」。"
+      "Basic edits preview live; advanced edits use Preview.",
+      "基础调整实时预览；高级调整使用预览。"
     )
   }
   var maskBrushHint: String {

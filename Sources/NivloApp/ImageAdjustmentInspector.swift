@@ -2,6 +2,28 @@ import NivloDomain
 import NivloImaging
 import SwiftUI
 
+private enum AdjustmentInspectorSection: String, CaseIterable, Identifiable {
+  case basic
+  case levels
+  case curves
+  case hsl
+
+  var id: String { rawValue }
+
+  func title(language: NivloLanguage) -> String {
+    switch self {
+    case .basic:
+      language.basicAdjustments
+    case .levels:
+      language.levels
+    case .curves:
+      language.curves
+    case .hsl:
+      language.shortColorMixer
+    }
+  }
+}
+
 struct ImageAdjustmentInspector: View {
   let language: NivloLanguage
   @Binding var settings: ImageAdjustmentSettings
@@ -20,10 +42,7 @@ struct ImageAdjustmentInspector: View {
   @State private var curveChannel: ImageColorChannel = .rgb
   @State private var colorBand: HSLColorBand = .red
   @State private var isPresetExpanded = false
-  @State private var isBasicExpanded = true
-  @State private var isLevelsExpanded = false
-  @State private var isCurvesExpanded = false
-  @State private var isColorMixerExpanded = false
+  @State private var selectedSection: AdjustmentInspectorSection = .basic
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -42,13 +61,9 @@ struct ImageAdjustmentInspector: View {
             count: histogram.highlightClippingCount
           )
         }
-        Text(language.sourceHistogramHint)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
       }
 
-      renderPreviewCallout
+      renderPreviewBar
 
       DisclosureGroup(language.adjustmentPreset, isExpanded: $isPresetExpanded) {
         VStack(alignment: .leading, spacing: 8) {
@@ -74,85 +89,20 @@ struct ImageAdjustmentInspector: View {
       .font(.caption)
       .padding(.vertical, 2)
 
-      adjustmentSection(language.basicAdjustments, isExpanded: $isBasicExpanded) {
-        VStack(alignment: .leading, spacing: 10) {
-          slider(language.adjustExposure, value: $settings.exposure, range: -2...2)
-          slider(language.adjustContrast, value: $settings.contrast, range: -0.5...0.5)
-          slider(language.adjustSaturation, value: $settings.saturation, range: -1...1)
-          slider(language.adjustWarmth, value: $settings.warmth, range: -1...1)
-          slider(language.adjustTint, value: $settings.tint, range: -1...1)
-          slider(language.adjustHighlights, value: $settings.highlights, range: -1...1)
-          slider(language.adjustShadows, value: $settings.shadows, range: -1...1)
-          slider(language.adjustClarity, value: $settings.clarity, range: -1...1)
-          slider(language.adjustVibrance, value: $settings.vibrance, range: -1...1)
-          slider(language.adjustSharpness, value: $settings.sharpness, range: 0...1)
-          slider(language.adjustNoiseReduction, value: $settings.noiseReduction, range: 0...1)
-          slider(language.adjustVignette, value: $settings.vignette, range: 0...1)
-        }
-      }
-
-      adjustmentSection(language.levels, isExpanded: $isLevelsExpanded) {
-        VStack(alignment: .leading, spacing: 10) {
-          channelPicker(selection: $levelChannel)
-          slider(
-            language.blackPoint,
-            value: levelBinding(\.blackPoint),
-            range: 0...0.95
-          )
-          slider(
-            language.whitePoint,
-            value: levelBinding(\.whitePoint),
-            range: 0.05...1
-          )
-          slider(
-            language.gamma,
-            value: levelBinding(\.gamma),
-            range: 0.1...3
-          )
-        }
-      }
-
-      adjustmentSection(language.curves, isExpanded: $isCurvesExpanded) {
-        VStack(alignment: .leading, spacing: 10) {
-          channelPicker(selection: $curveChannel)
-          CurveEditor(curve: curveBinding)
-            .frame(height: 132)
-        }
-      }
-
-      adjustmentSection(language.colorMixer, isExpanded: $isColorMixerExpanded) {
-        VStack(alignment: .leading, spacing: 10) {
-          Picker(language.colorBand, selection: $colorBand) {
-            ForEach(HSLColorBand.allCases, id: \.self) {
-              Text($0.rawValue.capitalized).tag($0)
-            }
-          }
-          slider(language.hue, value: colorBandBinding(\.hue), range: -1...1)
-          slider(
-            language.adjustSaturation,
-            value: colorBandBinding(\.saturation),
-            range: -1...1
-          )
-          slider(
-            language.luminance,
-            value: colorBandBinding(\.luminance),
-            range: -1...1
-          )
-        }
-      }
+      sectionPicker
+      sectionCard
     }
   }
 
-  private var renderPreviewCallout: some View {
-    HStack(alignment: .top, spacing: 10) {
-      Label(
+  private var renderPreviewBar: some View {
+    HStack(spacing: 10) {
+      Text(
         requiresFullRenderPreview
-          ? language.fullRenderPreviewHint : language.renderPreviewControlHint,
-        systemImage: "sparkles.rectangle.stack"
+          ? language.fullRenderPreviewHint : language.renderPreviewControlHint
       )
       .font(.caption)
       .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
+      .lineLimit(1)
 
       Spacer(minLength: 8)
 
@@ -163,36 +113,39 @@ struct ImageAdjustmentInspector: View {
           ProgressView()
             .controlSize(.small)
         } else {
-          Label(
-            isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview,
-            systemImage: isRenderedPreviewPresented ? "xmark.circle" : "sparkles.rectangle.stack"
-          )
-          .labelStyle(.titleAndIcon)
+          Text(isRenderedPreviewPresented ? language.exitPreview : language.previewChanges)
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.bordered)
       .controlSize(.small)
       .disabled(isRenderingPreview || isRenderPreviewDisabled)
       .help(isRenderedPreviewPresented ? language.exitPreview : language.renderedPreview)
     }
-    .padding(10)
-    .background(
-      Color.accentColor.opacity(requiresFullRenderPreview ? 0.1 : 0.06),
-      in: RoundedRectangle(cornerRadius: 10)
-    )
+    .padding(.vertical, 2)
   }
 
-  private func adjustmentSection<Content: View>(
-    _ title: String,
-    isExpanded: Binding<Bool>,
-    @ViewBuilder content: @escaping () -> Content
-  ) -> some View {
-    DisclosureGroup(isExpanded: isExpanded) {
-      content()
-        .padding(.top, 8)
-    } label: {
-      Text(title)
-        .font(.caption.weight(.semibold))
+  private var sectionPicker: some View {
+    Picker(language.adjustmentSection, selection: $selectedSection) {
+      ForEach(AdjustmentInspectorSection.allCases) { section in
+        Text(section.title(language: language)).tag(section)
+      }
+    }
+    .pickerStyle(.segmented)
+    .controlSize(.small)
+  }
+
+  private var sectionCard: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      switch selectedSection {
+      case .basic:
+        basicControls
+      case .levels:
+        levelsControls
+      case .curves:
+        curvesControls
+      case .hsl:
+        hslControls
+      }
     }
     .padding(10)
     .background(
@@ -201,8 +154,77 @@ struct ImageAdjustmentInspector: View {
     )
   }
 
+  private var basicControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      slider(language.adjustExposure, value: $settings.exposure, range: -2...2)
+      slider(language.adjustContrast, value: $settings.contrast, range: -0.5...0.5)
+      slider(language.adjustSaturation, value: $settings.saturation, range: -1...1)
+      slider(language.adjustWarmth, value: $settings.warmth, range: -1...1)
+      slider(language.adjustTint, value: $settings.tint, range: -1...1)
+      slider(language.adjustHighlights, value: $settings.highlights, range: -1...1)
+      slider(language.adjustShadows, value: $settings.shadows, range: -1...1)
+      slider(language.adjustClarity, value: $settings.clarity, range: -1...1)
+      slider(language.adjustVibrance, value: $settings.vibrance, range: -1...1)
+      slider(language.adjustSharpness, value: $settings.sharpness, range: 0...1)
+      slider(language.adjustNoiseReduction, value: $settings.noiseReduction, range: 0...1)
+      slider(language.adjustVignette, value: $settings.vignette, range: 0...1)
+    }
+  }
+
+  private var levelsControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      channelPicker(selection: $levelChannel)
+      slider(
+        language.blackPoint,
+        value: levelBinding(\.blackPoint),
+        range: 0...0.95
+      )
+      slider(
+        language.whitePoint,
+        value: levelBinding(\.whitePoint),
+        range: 0.05...1
+      )
+      slider(
+        language.gamma,
+        value: levelBinding(\.gamma),
+        range: 0.1...3
+      )
+    }
+  }
+
+  private var curvesControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      channelPicker(selection: $curveChannel)
+      CurveEditor(curve: curveBinding)
+        .frame(height: 132)
+    }
+  }
+
+  private var hslControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Picker(language.colorBand, selection: $colorBand) {
+        ForEach(HSLColorBand.allCases, id: \.self) {
+          Text($0.rawValue.capitalized).tag($0)
+        }
+      }
+      .pickerStyle(.menu)
+      .controlSize(.small)
+      slider(language.hue, value: colorBandBinding(\.hue), range: -1...1)
+      slider(
+        language.adjustSaturation,
+        value: colorBandBinding(\.saturation),
+        range: -1...1
+      )
+      slider(
+        language.luminance,
+        value: colorBandBinding(\.luminance),
+        range: -1...1
+      )
+    }
+  }
+
   private func clippingLabel(_ title: String, count: Int) -> some View {
-    Label("\(title): \(count)", systemImage: count > 0 ? "exclamationmark.triangle" : "checkmark")
+    Text("\(title): \(count)")
       .font(.caption2)
       .foregroundStyle(count > 0 ? Color.orange : Color.secondary)
   }
